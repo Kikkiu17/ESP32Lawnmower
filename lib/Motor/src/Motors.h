@@ -23,21 +23,31 @@ class Motors
         char getDirection();
 
         /**
-         * @brief Mantiene l'heading attuale.
+         * @brief Mantiene l'heading attuale
          * 
          * @param reverse Determina se il robot sta andando indietro (true) o no (false, valore default)
          */
         void maintainHeading(bool reverse = false);
 
         /**
-         * Imposta la velocità del motore selezionato.
+         * @brief Imposta la velocità del motore selezionato
          * 
-         * @param speed Velocità (0-255).
-         * @param motor Motore selezionato. Può essere: RIGHT, LEFT, BOTH, MAIN.
+         * @param speed Velocità (0-255)
+         * @param motor Motore selezionato. Può essere: RIGHT, LEFT, BOTH, MAIN
          */
         void setSpeed(uint8_t speed, uint8_t motor);
 
         void playStartSound();
+
+        /**
+         * @brief Accende / spegne il motore principale
+         *
+         * @param speed Velocità (0-255). Default: 170
+         * @param motor_status Forza lo spegnimento o accensione del motore. Può essere: STOP, RUNNING. Default: TOGGLE
+         * @return true se il motore è acceso
+         * @return false se il motore è spento
+         */
+        bool toggleMainMotor(uint8_t spd = 170, uint8_t motor_status = TOGGLE);
 
         uint32_t getTime();
 };

@@ -8,8 +8,9 @@ uint32_t status_time1 = millis();
 void Status::begin()
 {
     pinMode(RUNNING_LED, OUTPUT);
-    //pinMode(WARNING_LED, OUTPUT);
     pinMode(ERROR_LED, OUTPUT);
+    digitalWrite(RUNNING_LED, HIGH);
+    digitalWrite(ERROR_LED, HIGH);
 }
 
 void Status::update()
@@ -32,6 +33,7 @@ void Status::setReady(bool condition)
 {
     running = false;
     digitalWrite(RUNNING_LED, condition);
+    setError(false);
 }
 
 void Status::setRunning(bool condition)

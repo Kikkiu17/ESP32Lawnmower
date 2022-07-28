@@ -10,6 +10,7 @@ class Core
         void printStartDataPacket();
         void printStopDataPacket();
         void println(char* TYPE, float VALUE = -25565);
+        void lowBat();
 };
 
 #endif

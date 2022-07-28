@@ -15,6 +15,8 @@ NAV navigation;
 Mux mux;
 BluetoothSerial coreSerialBT;
 
+bool lowbat = false;
+
 void Core::begin()
 {
     status.begin();
@@ -27,6 +29,8 @@ void Core::begin()
 
 void Core::loop()
 {
+    if (lowbat)
+        return;
     status.update();
     sensors.update();
     motors.update();
@@ -74,4 +78,11 @@ void Core::printStopDataPacket()
 {
     Serial.print("DATA_PACKET_STOP;");
     coreSerialBT.print("DATA_PACKET_STOP;");
+}
+
+void Core::lowBat()
+{
+    println("BATTERIA SCARICA");
+    lowbat = true;
+    motors.toggleMainMotor(0, STOP);
 }

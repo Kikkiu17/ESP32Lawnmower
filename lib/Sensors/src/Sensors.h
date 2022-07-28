@@ -29,10 +29,8 @@ class Sensors
          * @brief Controlla se c'è un ostacolo davanti al robot
          *
          * @param request_type Tipo di richiesta. Può essere: DEFAULT, MOTORS
-         * @return true,
-         * @return false
          */
-        bool checkFrontObstacle(uint8_t request_type = DEFAULT);
+        void checkFrontObstacle(uint8_t request_type = DEFAULT);
         int getFWDInfrared();
 
         void getAccelErrors();
@@ -53,6 +51,8 @@ class Sensors
         void returnUSDistance(float distance);
 
         uint32_t getTime();
+
+        float getBatVoltage();
 
     private:
         /**

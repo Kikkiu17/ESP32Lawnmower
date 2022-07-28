@@ -7,9 +7,10 @@
 #include <NewPing.h>
 #include <Sensors.h>
 
+// vedere SETTINGS.h in region "Pin diretti ESP" per informazioni sul pin 17 - ENABLE
+
 BluetoothSerial MUXBT;
 Sensors MUXSensor;
-
 TaskHandle_t PulseIn;
 
 bool execute_once = false;
@@ -58,7 +59,7 @@ void Mux::selectChannel(byte ch, uint8_t mode)
     digitalWrite(MUX1, channels[ch][2]);
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
-    digitalWrite(MUX_ENABLE, 0);
+    // digitalWrite(MUX_ENABLE, 0);
 }
 
 void PulseInFunction(void *param)
@@ -138,7 +139,7 @@ void Mux::begin()
     pinMode(MUX1, OUTPUT);
     pinMode(MUX2, OUTPUT);
     pinMode(MUX3, OUTPUT);
-    pinMode(MUX_ENABLE, OUTPUT);
+    // pinMode(MUX_ENABLE, OUTPUT);
 }
 
 void Mux::loop()
@@ -148,7 +149,7 @@ void Mux::loop()
 
 uint16_t Mux::readAnalog(byte ch)
 {
-    digitalWrite(MUX_ENABLE, 1);
+    // digitalWrite(MUX_ENABLE, 1);
     ledcDetachPin(MUX_COM);
     pinMode(MUX_COM, INPUT);
     digitalWrite(MUX0, channels[ch][3]);
@@ -156,13 +157,13 @@ uint16_t Mux::readAnalog(byte ch)
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
     delayMicroseconds(5);
-    digitalWrite(MUX_ENABLE, 0);
+    // digitalWrite(MUX_ENABLE, 0);
     return analogRead(MUX_COM);
 }
 
 uint8_t Mux::readDigital(byte ch)
 {
-    digitalWrite(MUX_ENABLE, 1);
+    // digitalWrite(MUX_ENABLE, 1);
     ledcDetachPin(MUX_COM);
     pinMode(MUX_COM, INPUT);
     digitalWrite(MUX0, channels[ch][3]);
@@ -170,7 +171,7 @@ uint8_t Mux::readDigital(byte ch)
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
     delayMicroseconds(5);
-    digitalWrite(MUX_ENABLE, 0);
+    // digitalWrite(MUX_ENABLE, 0);
     if (analogRead(MUX_COM) > 2046)
         return 1;
     else
@@ -185,7 +186,7 @@ void Mux::writeDigital(byte ch, uint8_t value)
     digitalWrite(MUX1, channels[ch][2]);
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
-    digitalWrite(MUX_ENABLE, 0);
+    // digitalWrite(MUX_ENABLE, 0);
     digitalWrite(MUX_COM, value);
 }
 
@@ -197,7 +198,7 @@ void Mux::writeAnalog(byte ch, uint16_t value, uint32_t frequency, uint8_t resol
     digitalWrite(MUX1, channels[ch][2]);
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
-    digitalWrite(MUX_ENABLE, 0);
+    // digitalWrite(MUX_ENABLE, 0);
     ledcWrite(1, value);
 }
 
@@ -218,18 +219,18 @@ float Mux::requestUSDistance(uint8_t sens)
 
     if (sens == FRONT)
     {
-        USData.read = 7;
-        USData.write = 4;
+        USData.read = US_ECHO_F;
+        USData.write = US_TRIG_F;
     }
     else if (sens == RIGHT)
     {
-        USData.read = 6;
-        USData.write = 5;
+        USData.read = US_ECHO_R;
+        USData.write = US_TRIG_R;
     }
     else
     {
-        USData.read = 9;
-        USData.write = 10;
+        USData.read = US_ECHO_L;
+        USData.write = US_TRIG_L;
     }
 
     xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 2000, NULL, 24, &PulseIn, 0);

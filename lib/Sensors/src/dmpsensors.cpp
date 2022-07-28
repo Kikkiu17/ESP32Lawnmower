@@ -12,8 +12,6 @@
 #include <WebSerial.h>
 #endif
 
-// TODO: TOGLIERE FUNZIONI PER CAMBIARE CERTE VARIABILI E USARE EXTERN
-
 // classi librerie
 Motors sensormotors;
 Status sensorstatus;
@@ -24,10 +22,9 @@ BluetoothSerial sensorserial;
 Mux sensormux;
 uint64_t t2 = 0;
 
-// pin locali
 #define OUTPUT_READABLE_YAWPITCHROLL
 #define OUTPUT_READABLE_REALACCEL
-#define INTERRUPT_PIN 4
+// #define INTERRUPT_PIN 4 // usato da S1 (MUX) in PCB
 
 // variabili
 uint16_t forward_filter_acc_data = 0;
@@ -43,11 +40,11 @@ uint32_t time3 = millis();
 uint32_t time1_movement_sensor = 0;
 bool go_once_movement_sensor = false;
 
-bool ALLOW_SECOND_EDGE = false;
-bool ALLOW_RISING_EDGE = false;
+bool allow_second_edge = false;
+bool allow_rising_edge = false;
 unsigned long time1 = 0;
 unsigned long time2 = 0;
-// float RPS_REQUIRED_PERIOD = 1000 / ENCODER_TEETH; // deprecated
+// float RPS_REQUIRED_PERIOD = 1000 / encoder_TEETH; // deprecated
 
 int movement_checked = 0;
 bool check_movement = false;
@@ -147,7 +144,7 @@ struct Infrared_Sensor
     uint8_t request_type = DEFAULT;
 };
 
-struct
+struct Encoder
 {
     bool active = false;
     float traveled_distance_raw = 0;
@@ -161,13 +158,12 @@ struct
     float last_traveled_distance = 0;
     uint32_t time4 = millis();
 
-} Encoder;
+};
 
 Ultrasonic_request US_REQ;
-
 Ultrasonic_Sensor Ultrasonic;
-
 Infrared_Sensor Infrared;
+Encoder encoder;
 
 void Sensors::begin()
 {
@@ -178,7 +174,7 @@ void Sensors::begin()
     // sensorserial.println(F("Initializing I2C devices..."));
 #endif
     mpu.initialize();
-    pinMode(INTERRUPT_PIN, INPUT);
+    // pinMode(INTERRUPT_PIN, INPUT); // pin interrupt non connesso
 
 // verify connection
 #ifdef ENABLE_LOGGING
@@ -211,7 +207,8 @@ void Sensors::begin()
         // enable Arduino interrupt detection
         // sensorserial.print(digitalPinToInterrupt(INTERRUPT_PIN));
         // sensorserial.println(F(")..."));
-        attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+        
+        // attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING); // pin interrupt non connesso
         mpuIntStatus = mpu.getIntStatus();
 
 #ifdef ENABLE_LOGGING
@@ -226,12 +223,18 @@ void Sensors::begin()
         sensorscore.println((char *)"DMP FAIL");
     }
     /* #endregion */
+
+    pinMode(RPM_SENS, INPUT);
+    pinMode(BAT, INPUT);
+
+    if (getBatVoltage() < 12.0)
+        sensorscore.lowBat();
 }
 
 int Sensors::getFWDInfrared()
 {
     // invertito: 0 = libero; 1 = ostacolo
-    return !sensormux.readDigital(IR_FWD_CH);
+    return !sensormux.readDigital(IR_F);
 }
 
 uint32_t TEMP_TIME = 0;
@@ -240,57 +243,49 @@ void Sensors::update()
 {
     uint32_t start_time = micros();
 
-    if (millis() - TEMP_TIME > 60000)
+    if (millis() - TEMP_TIME > 30000)
     {
         TEMP_TIME = millis();
-        float raw_air_temp = mpu.getTemperature();
-        float air_temp = (raw_air_temp / 340) + 36.53;
-        sensorserial.print("AIR TEMPERATURE: ");
-        sensorserial.print(air_temp);
-        sensorserial.print("(");
-        sensorserial.print(raw_air_temp);
-        sensorserial.println(")");
-        sensorserial.print("CORE TEMPERATURE: ");
-        sensorserial.println(temperatureRead());
+        /*float raw_air_temp = mpu.getTemperature();
+        float air_temp = (raw_air_temp / 340) + 36.53; // da datasheet MPU6050*/
+        if (getBatVoltage() < 12.0)
+            sensorscore.lowBat();
     }
 
-    if (Infrared.enable)
+    if (Infrared.enable && ENABLE_OBSTACLE_AVOIDANCE)
     {
-        if (ENABLE_OBSTACLE_AVOIDANCE)
+        if (millis() - Infrared.timer > 10)
         {
-            if (millis() - Infrared.timer > 10)
-            {
-                uint8_t FWD_IR = !sensormux.readDigital(IR_FWD_CH);
+            uint8_t FWD_IR = !sensormux.readDigital(IR_F);
 
-                if (FWD_IR == 1)
+            if (FWD_IR == 1)
+            {
+                // ferma il robot se il sensore infrarossi anteriore rileva un ostacolo
+                sensorscore.println((char *)"(SENS) IR SENSOR STOP");
+                FWD_IR = 0;
+                stop_sensor_type = INFRARED;
+                stop_sensor_direction = FRONT;
+                if (Infrared.request_type == MOTORS)
                 {
-                    // ferma il robot se il sensore infrarossi anteriore rileva un ostacolo
-                    sensorscore.println((char *)"(SENS) IR SENSOR STOP");
-                    FWD_IR = 0;
-                    stop_sensor_type = INFRARED;
-                    stop_sensor_direction = FRONT;
-                    if (Infrared.request_type == MOTORS)
-                    {
-                        sensorsnav.obstacleDetectedBeforeMoving(stop_sensor_type, stop_sensor_direction);
-                        sensormotors.stop();
-                        stopMoving();
-                    }
-                    else if (US_REQ.request_type == DEFAULT)
-                    {
-                        sensorsnav.obstacleDetectedWhileMoving(stop_sensor_type, stop_sensor_direction);
-                        sensormotors.stop();
-                        stopMoving();
-                    }
-                    Infrared.enable = false;
-                    //Infrared.obstacle_detected = true;
+                    sensorsnav.obstacleDetectedBeforeMoving(stop_sensor_type, stop_sensor_direction);
+                    sensormotors.stop();
+                    stopMoving();
                 }
-                else
+                else if (US_REQ.request_type == DEFAULT)
                 {
-                    // se il sensore infrarossi non rileva niente, usa il sensore ultrasuoni
-                    getFrontUSObstacle(Infrared.request_type);
-                    Infrared.enable = false;
-                    //Infrared.obstacle_detected = false;
+                    sensorsnav.obstacleDetectedWhileMoving(stop_sensor_type, stop_sensor_direction);
+                    sensormotors.stop();
+                    stopMoving();
                 }
+                Infrared.enable = false;
+                //Infrared.obstacle_detected = true;
+            }
+            else
+            {
+                // se il sensore infrarossi non rileva niente, usa il sensore ultrasuoni
+                getFrontUSObstacle(Infrared.request_type);
+                Infrared.enable = false;
+                //Infrared.obstacle_detected = false;
             }
         }
     }
@@ -424,7 +419,8 @@ void Sensors::update()
     {
         go_once_movement_sensor = false;
     }
-    // controllo moving
+
+    // controllo moving ogni ms
     if (millis() - time3 > 1)
     {
         if (ENABLE_MOVEMENT_SENSORS)
@@ -701,39 +697,42 @@ void Sensors::update()
     char direction = sensormotors.getDirection();
 
     // ottieni i metri percorsi dall'encoder
-    if (direction == 'w' || direction == 's')
+    if (ENABLE_ENCODER)
     {
-        int16_t encoder_period = getEncoderPeriod();
-
-        if (encoder_period > 5 && encoder_period < 4500)
+        if (direction == 'w' || direction == 's')
         {
-            uint16_t revolution_time = encoder_period * ENCODER_TEETH;
-            float encoder_current_rps = 1000.00 / (float)revolution_time;
-            Encoder.wheel_current_rps = encoder_current_rps * GEAR_RATIO;
-            Encoder.wheel_current_spd = Encoder.wheel_circumference * Encoder.wheel_current_rps;
+            int16_t encoder_period = getEncoderPeriod();
 
-            if (Encoder.last_wheel_spd != Encoder.wheel_current_spd)
+            if (encoder_period > 5 && encoder_period < 4500)
             {
-                uint32_t time_to_subtract = millis();
+                uint16_t revolution_time = encoder_period * ENCODER_TEETH;
+                float encoder_current_rps = 1000.00 / (float)revolution_time;
+                encoder.wheel_current_rps = encoder_current_rps * GEAR_RATIO;
+                encoder.wheel_current_spd = encoder.wheel_circumference * encoder.wheel_current_rps;
 
-                if (motors_rotating && !motors_rotating_check)
+                if (encoder.last_wheel_spd != encoder.wheel_current_spd)
                 {
-                    motors_rotating_check = true;
-                    time_to_subtract = millis();
-                    Encoder.time4 = time_to_subtract;
+                    uint32_t time_to_subtract = millis();
+
+                    if (motors_rotating && !motors_rotating_check)
+                    {
+                        motors_rotating_check = true;
+                        time_to_subtract = millis();
+                        encoder.time4 = time_to_subtract;
+                    }
+
+                    uint16_t delta_t_ms = time_to_subtract - encoder.time4;
+
+                    // S(t) = S0 + vt
+                    encoder.traveled_distance_raw += encoder.wheel_current_spd * delta_t_ms;
+                    encoder.traveled_distance = encoder.traveled_distance_raw / 1000000;
+                    encoder.last_traveled_distance = encoder.wheel_current_spd * delta_t_ms / 1000000;
+
+                    encoder.time4 = millis();
                 }
 
-                uint16_t delta_t_ms = time_to_subtract - Encoder.time4;
-
-                // S(t) = S0 + vt
-                Encoder.traveled_distance_raw += Encoder.wheel_current_spd * delta_t_ms;
-                Encoder.traveled_distance = Encoder.traveled_distance_raw / 1000000;
-                Encoder.last_traveled_distance = Encoder.wheel_current_spd * delta_t_ms / 1000000;
-
-                Encoder.time4 = millis();
+                encoder.last_wheel_spd = encoder.wheel_current_spd;
             }
-
-            Encoder.last_wheel_spd = Encoder.wheel_current_spd;
         }
     }
 
@@ -899,6 +898,8 @@ int Sensors::getAccX()
     if (accel > maxX || accel < minX)
     {
         accel += zeroX;
+        if (INVERT_ACC_X)
+            accel *= -1;
         return accel;
     }
     else
@@ -915,12 +916,12 @@ int Sensors::getAccY()
     if (accel > maxY || accel < minY)
     {
         accel += zeroY;
+        if (INVERT_ACC_Y)
+            accel *= -1;
         return accel;
     }
     else
-    {
         return 0; // ritorna 0 se l'accelerazione è dentro la finestra dello zero
-    }
 }
 
 int Sensors::getAccZ()
@@ -931,83 +932,74 @@ int Sensors::getAccZ()
     if (accel > maxZ || accel < minZ)
     {
         accel += zeroZ;
+        if (INVERT_ACC_Z)
+            accel *= -1;
         return accel;
     }
     else
-    {
         return 0; // ritorna 0 se l'accelerazione è dentro la finestra dello zero
-    }
 }
 
 int32_t Sensors::getRoll()
 {
     getValues();
-
-    // VALORI MOLTIPLICATI PER 100
-
     int32_t incl = (roll + zeroR) * 100;
+    if (INVERT_ROLL)
+        incl *= -1;
     return incl;
 }
 
 int32_t Sensors::getPitch()
 {
     getValues();
-
-    // VALORI MOLTIPLICATI PER 100
-
     int32_t incl = (pitch + zeroP) * 100;
+    if (INVERT_PITCH)
+        incl *= -1;
     return incl;
 }
 
 int32_t Sensors::getHeading()
 {
     getValues();
-
-    // VALORI MOLTIPLICATI PER 100
-
     int32_t incl = (yaw + zeroW) * 100;
+    if (INVERT_YAW)
+        incl *= -1;
     return incl;
 }
 
 int Sensors::getEncoderPeriod()
 {
     uint16_t diff = 0;
-    bool ALLOW_RETURN = false;
+    bool allow_return = false;
 
     if (digitalRead(RPM_SENS) == 0)
-    {
-        ALLOW_RISING_EDGE = true;
-    }
+        allow_rising_edge = true;
 
-    if (ALLOW_RISING_EDGE)
+    if (allow_rising_edge)
     {
         if (digitalRead(RPM_SENS) == 1)
         {
-            ALLOW_RISING_EDGE = false;
-            if (ALLOW_SECOND_EDGE)
+            allow_rising_edge = false;
+            if (allow_second_edge)
             {
-                ALLOW_SECOND_EDGE = false;
+                allow_second_edge = false;
                 time2 = millis();
                 diff = time2 - time1;
 
-                ALLOW_RETURN = true;
+                allow_return = true;
             }
             else
             {
-                ALLOW_SECOND_EDGE = true;
+                allow_second_edge = true;
                 time1 = millis();
             }
         }
     }
 
-    if (ALLOW_RETURN)
-    {
+    if (allow_return)
         return diff;
-    }
     else
-    {
         return -1;
-    }
 }
 
 void Sensors::checkMovement(char axis)
@@ -1050,20 +1042,20 @@ void Sensors::setMotorsStop()
 
 float Sensors::getTraveledDistance()
 {
-    return Encoder.traveled_distance;
+    return encoder.traveled_distance;
 }
 
 void Sensors::resetTraveledDistance()
 {
-    Encoder.traveled_distance_raw = 0;
-    Encoder.traveled_distance = 0;
-    Encoder.last_traveled_distance = 0;
+    encoder.traveled_distance_raw = 0;
+    encoder.traveled_distance = 0;
+    encoder.last_traveled_distance = 0;
 }
 
 int Sensors::getLeftInfrared()
 {
     // invertito: 0 = libero; 1 = ostacolo
-    return !sensormux.readDigital(IR_LEFT_CH);
+    return !sensormux.readDigital(IR_L);
 }
 
 void Sensors::setAutoRun(bool state)
@@ -1088,17 +1080,27 @@ void Sensors::getFrontUSObstacle(uint8_t req_type)
     }
 }
 
-bool Sensors::checkFrontObstacle(uint8_t request_type)
+void Sensors::checkFrontObstacle(uint8_t request_type)
 {
     Infrared.request_type = request_type;
     Ultrasonic.request_type = request_type;
     US_REQ.request_type = request_type;
     Infrared.enable = true; // Ultrasonic.enable viene controllato da Infrared
     Infrared.timer = millis();
-    return false;
 }
 
 float Sensors::getLastTraveledDistance()
 {
-    return Encoder.last_traveled_distance;
+    return encoder.last_traveled_distance;
+}
+
+float Sensors::getBatVoltage()
+{
+    float tot_voltage = 0.00;
+    uint64_t start_time = micros();
+    // tempo per ottenere le misurazioni: circa 6ms
+    for (int i = 0; i < 50; i++)
+        tot_voltage += analogRead(BAT);
+    uint64_t diff = micros() - start_time;
+    return tot_voltage / 11475;
 }
