@@ -18,18 +18,8 @@
 #endif
 
 AsyncWebServer server(80);
-
-// IMPORTANTE:
-// LA PARTE ANTERIORE DELL'IMU è DOVE CI SONO I DISEGNI (DIREZIONE + CONDENSATORE)
-// CTRL+M, CTRL+R PER CREARE UNA REGION
-
-// I PIN 17, 5 SONO TRANSISTOR COLLEGATI AL GND DEL DRIVER MOTORI (PER FARLI GIRARE, USARE PWM O RENDERE HIGH I 2 PIN)
-// TODO: SALDARE TRANSISTOR NPN PER PIN 5
-
 BluetoothSerial SerialBT;
-
 WifiCredentials wificreds;
-
 Motors robotmotors;
 Sensors robotsensors;
 Status robotstatus;
@@ -38,69 +28,44 @@ NAV robotnav;
 Mux robotmux;
 
 uint32_t ref_time = millis();
-bool red_led = false;
+bool status_led = false;
+byte BTData;
 
 void setup()
 {
   Serial.begin(2000000);
-  //WebSerial.begin(&server);
-  //WebSerial.msgCallback(recvMsg);
-
   SerialBT.begin("ESP32Robot");
   core.begin();
 
   /* #region  WiFi, ElegantOTA */
   WiFi.mode(WIFI_STA);
   WiFi.begin(wificreds.ssid, wificreds.password);
-  //WebSerial.println("");
-  Serial.println("");
 
-  // Wait for connection
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
     SerialBT.print(".");
-    Serial.print(".");
-    red_led = !red_led;
-    digitalWrite(ERROR_LED, red_led);
+    // fa lampeggiare i led
+    status_led = !status_led;
+    digitalWrite(ERROR_LED, status_led);
+    digitalWrite(RUNNING_LED, status_led);
   }
 
   robotstatus.setReady(true);
-
-  //WebSerial.println("");
-  //WebSerial.print("Connected to ");
-  //WebSerial.println(ssid);
-  //WebSerial.print("IP address: ");
-  //WebSerial.println(WiFi.localIP());
-
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(wificreds.ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  robotmotors.setSpeed(0, MAIN);
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(200, "text/plain", "Hi! I am ESP32."); });
 
-  AsyncElegantOTA.begin(&server); // Start ElegantOTA
+  AsyncElegantOTA.begin(&server);
   server.begin();
-  //WebSerial.println("HTTP server started");
 
-  //WebSerial.print("Total heap: ");
-  //WebSerial.println(ESP.getHeapSize());
-  //WebSerial.print("Free heap: ");
-  //WebSerial.println(ESP.getFreeHeap());
-  //WebSerial.print("Flash chip size: ");
-  //WebSerial.println(ESP.getFlashChipSize());
-  //WebSerial.print("Flash speed: ");
-  //WebSerial.println(ESP.getFlashChipSpeed());
+  #ifdef ENABLE_WEBSERIAL
+    WebSerial.begin(&server);
+    WebSerial.msgCallback(recvMsg);
+  #endif
   /* #endregion */
-
-  pinMode(19, OUTPUT); // PIN MOTORE PRINCIPALE
 }
-
-int spd = 60;
-byte BTData;
 
 void loop()
 {
@@ -130,20 +95,19 @@ void loop()
     }
     else if (BTData == 'y')
     {
-      // funzione libera
+      // inutilizzato
     }
     else if (BTData == 'i')
     {
-      // funzione libera
+      // inutilizzato
     }
     else if (BTData == 'o')
     {
-      // funzione libera
+      // inutilizzato
     }
     else if (BTData == 'm')
     {
-      // accensione motore principale
-      robotmotors.setSpeed(100, MAIN);
+      robotmotors.toggleMainMotor();
     }
     else if (BTData == 'p')
     {
@@ -157,13 +121,13 @@ void loop()
     {
       core.println((char *)"TYPE_BT_STOP");
       robotnav.externalStop();
-      /*SerialBT.print("MAX HEAP: ");
-      SerialBT.println(ESP.getMaxAllocHeap());*/
     }
   }
 
   core.loop();
 
+  // mostra ogni 250 ms il tempo di esecuzione per ciascun modulo
+  // e lo stato dell'heap
   /*if (millis() - ref_time > 250)
   {
     ref_time = millis();
