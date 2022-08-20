@@ -160,7 +160,7 @@ void Motors::update()
         {
             if (millis() - mainmotor.playsound.time > 250)
             {
-                ledcSetup(CHANNEL_MAIN, 2000, 8);
+                ledcSetup(CHANNEL_MAIN, 100, 8);
                 ledcWrite(CHANNEL_MAIN, 0);
                 mainmotor.playsound.active = false;
                 mainmotor.playsound.note_n = 0;
@@ -199,8 +199,8 @@ uint32_t Motors::getTime()
 void Motors::forward()
 {
     stop();
-    motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
-    motorscore.println((char *)"(MOT) MOTORS FORWARD");
+    //motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
+    motorscore.println((char *)"(Motors.cpp) MOTORS FORWARD");
     motorstatus.setRunning(true);
 
     if (!maintain_heading)
@@ -224,11 +224,13 @@ void Motors::forward()
 void Motors::backwards()
 {
     stop();
-    motorscore.println((char *)"(MOT) MOTORS BACKWARDS");
+    motorscore.println((char *)"(Motors.cpp) MOTORS BACKWARDS");
     motorstatus.setRunning(true);
 
     if (!maintain_heading)
     {
+        left_spd = 255;
+        right_spd = 255;
         digitalWrite(MOTOR_RIGHT_DIR, BCK);
         digitalWrite(MOTOR_LEFT_DIR, BCK);
         ledcWrite(CHANNEL_RIGHT, 255);
@@ -281,7 +283,7 @@ void Motors::stop()
     direction = 't';
     robot_moving = false;
     maintain_heading = false;
-    motorsensor.stopMoving();
+    motorsensor.resetMovementVars();
     motorsensor.setMotorsStop();
 }
 
@@ -387,6 +389,7 @@ bool Motors::toggleMainMotor(uint8_t spd, uint8_t stat)
             mainmotor.active = true;
             mainmotor.startup.active = true;
             mainmotor.startup.speed_target = spd;
+            motorstatus.mainMotorStarting();
         }
         else
         {
@@ -401,6 +404,7 @@ bool Motors::toggleMainMotor(uint8_t spd, uint8_t stat)
         mainmotor.active = true;
         mainmotor.startup.active = true;
         mainmotor.startup.speed_target = spd;
+        motorstatus.mainMotorStarting();
     }
     else
     {

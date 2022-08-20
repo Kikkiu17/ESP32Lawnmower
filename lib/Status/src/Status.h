@@ -13,6 +13,7 @@ class Status
         void setWarning(bool);
         void setRunning(bool);
         void setReady(bool);
+        void mainMotorStarting();
 };
 
 #endif

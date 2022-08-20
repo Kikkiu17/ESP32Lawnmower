@@ -1,4 +1,5 @@
 #include <Sensors.h>
+#include <SPI.h>
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "Wire.h"
@@ -16,19 +17,21 @@
 Motors sensormotors;
 Status sensorstatus;
 MPU6050 mpu;
-Core sensorscore;
-NAV sensorsnav;
+Core sensorcore;
+NAV sensornav;
 BluetoothSerial sensorserial;
 Mux sensormux;
 uint64_t t2 = 0;
+TaskHandle_t MPU6050Status;
 
 #define OUTPUT_READABLE_YAWPITCHROLL
 #define OUTPUT_READABLE_REALACCEL
-// #define INTERRUPT_PIN 4 // usato da S1 (MUX) in PCB
 
 // variabili
-uint16_t forward_filter_acc_data = 0;
-uint16_t backwards_filter_acc_data = 0;
+bool mpu_ready = false;
+bool mpu_busy = false;
+int32_t forward_filter_acc_data = 0;
+int32_t backwards_filter_acc_data = 0;
 uint8_t times_acc_data_is_gathered = 0;
 float avg_acc = 0;
 bool filtering_active = false;
@@ -45,6 +48,7 @@ bool allow_rising_edge = false;
 unsigned long time1 = 0;
 unsigned long time2 = 0;
 // float RPS_REQUIRED_PERIOD = 1000 / encoder_TEETH; // deprecated
+// 14.5 mm encder
 
 int movement_checked = 0;
 bool check_movement = false;
@@ -61,11 +65,15 @@ int32_t last_heading = 0;
 int32_t last_heading_stop_check = 0;
 int rotation_checked = 0;
 bool not_rotating = false;
-const int rotations_to_check = 350;
+const int rotations_to_check = 50;
+
+uint64_t *sensor_packetptr;
+bool sensor_packet_ispolling = false;
 
 bool US_front_obstacle_detected = false;
 
 bool moving = false;
+float temp_acc = 0;
 
 int32_t accX = 0;
 int32_t accY = 0;
@@ -81,13 +89,13 @@ float zeroP = 0;
 float zeroR = 0;
 float zeroW = 0; // yaW, heading
 
-float maxX = 0;
-float maxY = 0;
-float maxZ = 0;
+int32_t maxX = 0;
+int32_t maxY = 0;
+int32_t maxZ = 0;
 
-float minX = 0;
-float minY = 0;
-float minZ = 0;
+int32_t minX = 0;
+int32_t minY = 0;
+int32_t minZ = 0;
 
 uint8_t stop_sensor_direction = FRONT;
 uint8_t stop_sensor_type = INFRARED;
@@ -103,16 +111,23 @@ uint8_t fifoBuffer[64]; // FIFO storage buffer
 // orientation/motion vars
 Quaternion q;        // [w, x, y, z]         quaternion container
 VectorInt16 aa;      // [x, y, z]            accel sensor measurements
+VectorInt16 gy;      // [x, y, z]            gyro sensor measurements
 VectorInt16 aaReal;  // [x, y, z]            gravity-free accel sensor measurements
 VectorInt16 aaWorld; // [x, y, z]            world-frame accel sensor measurements
 VectorFloat gravity; // [x, y, z]            gravity vector
+float euler[3];      // [psi, theta, phi]    Euler angle container
 float ypr[3];        // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
+// packet structure for InvenSense teapot demo
+uint8_t teapotPacket[14] = {'$', 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, '\r', '\n'};
+
 volatile bool mpuInterrupt = false; // indicates whether MPU interrupt pin has gone high
-void dmpDataReady()
+void IRAM_ATTR dmpDataReady()
 {
     mpuInterrupt = true;
 }
+
+bool selftest[3] = {false};
 
 struct Ultrasonic_Sensor
 {
@@ -131,7 +146,8 @@ struct Ultrasonic_request
     bool active = false;
     bool returned = false;
     uint8_t sensor_direction = FRONT;
-    float distance_measured = false;
+    uint32_t distance_measured = 0;
+    uint32_t last_distance_measured = 0;
     uint8_t request_type = DEFAULT;
     bool confirm_distance = false;
 };
@@ -149,86 +165,181 @@ struct Encoder
     bool active = false;
     float traveled_distance_raw = 0;
     float traveled_distance = 0;
-    const uint32_t wheel_circumference = WHEEL_DIAMETER * PI * 100;
-    const uint32_t traveled_distance_constant = wheel_circumference;
+    const float wheel_circumference = WHEEL_DIAMETER * PI * 100;
+    const float traveled_distance_constant = wheel_circumference;
     uint16_t last_encoder_period;
     float wheel_current_rps = 0;
     float wheel_current_spd = 0;
     float last_wheel_spd = 0;
     float last_traveled_distance = 0;
     uint32_t time4 = millis();
+};
 
+struct SetZero
+{
+    bool active = false;
+    uint8_t arr_idx = 0;
+    int32_t arrX[50] = {};
+    int32_t arrY[50] = {};
+    int32_t arrZ[50] = {};
+    int32_t old_accX = 0;
+    int32_t maxX = 0;
+    int32_t maxY = 0;
+    int32_t maxZ = 0;
+    int32_t minX = 0;
+    int32_t minY = 0;
+    int32_t minZ = 0;
+};
+
+struct SensorPacket
+{
+    uint64_t us_f = 0;
+    uint64_t us_l = 0;
+    uint64_t us_r = 0;
+    uint64_t ir_f = 0;
+    uint64_t ir_l = 0;
+    uint64_t bat = 0;
+    uint64_t read_digital = 0;
+    uint64_t read_analog = 0;
+    uint64_t packet_id = 0;
+    uint64_t last_packet_id = 0;
+    bool check_next_dst = false;
 };
 
 Ultrasonic_request US_REQ;
 Ultrasonic_Sensor Ultrasonic;
 Infrared_Sensor Infrared;
 Encoder encoder;
+SetZero setzero;
+SensorPacket senspacket;
+
+void MPU6050StatusFunction(void *param)
+{
+    BluetoothSerial taskserial;
+    taskserial.print("Waiting for MPU6050");
+    Serial.print("Waiting for MPU6050");
+    uint8_t time_passed = 0;
+    bool once_mpu = false;
+    for (;;)
+    {
+        if (!mpu_ready)
+        {
+            if (time_passed > 20) // 10 secondi
+            {
+                taskserial.println("10 seconds without MPU answer");
+                Serial.println("10 seconds without MPU answer");
+                vTaskDelete(NULL);
+            }
+            delay(500);
+            taskserial.print(".");
+            Serial.print(".");
+            time_passed++;
+        }
+        else
+        {
+            if (!once_mpu)
+            {
+                taskserial.println();
+                taskserial.println("MPU6050 READY");
+                taskserial.print("Waiting for DMP");
+                Serial.println();
+                Serial.println("MPU6050 READY");
+                Serial.print("Waiting for DMP");
+                once_mpu = true;
+                time_passed = 0;
+            }
+            else
+            {
+                if (!dmpReady)
+                {
+                    if (time_passed > 20) // 10 secondi
+                    {
+                        taskserial.println("10 seconds without DMP answer");
+                        Serial.println("10 seconds without DMP answer");
+                        vTaskDelete(NULL);
+                    }
+                    delay(500);
+                    taskserial.print(".");
+                    Serial.print(".");
+                    time_passed++;
+                }
+                else
+                {
+                    taskserial.println();
+                    taskserial.println("DMP READY");
+                    Serial.println();
+                    Serial.println("DMP READY");
+                    vTaskDelete(NULL);
+                }
+            }
+        }
+    }
+}
 
 void Sensors::begin()
 {
-    /* #region  Inizializzazione IMU */
+    xTaskCreatePinnedToCore(MPU6050StatusFunction, "MPU6050Status", 2000, NULL, 24, &MPU6050Status, 0);
+    sensorcore.println("SELF TEST SENSORI");
+    /* #region  Inizializzazione MPU6050 */
     Wire.begin(21, 22);
-    Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
-#ifdef ENABLE_LOGGING
-    // sensorserial.println(F("Initializing I2C devices..."));
-#endif
+    Wire.setClock(400000);
+    sensorcore.println(F("Initializing I2C devices..."));
     mpu.initialize();
-    // pinMode(INTERRUPT_PIN, INPUT); // pin interrupt non connesso
-
-// verify connection
-#ifdef ENABLE_LOGGING
-    // sensorserial.println(F("Testing device connections..."));
-    sensorscore.println(mpu.testConnection() ? (char *)"MPU6050 READY" : (char *)"MPU6050 FAIL");
-#endif
-
-// load and configure the DMP
-#ifdef ENABLE_LOGGING
-    // sensorserial.println(F("Initializing DMP..."));
-#endif
+    sensorcore.println(F("Scala accelerometro"), mpu.getFullScaleAccelRange());
+    sensorcore.println(F("Scala giroscopio"), mpu.getFullScaleGyroRange());
+    pinMode(INTERRUPT_PIN, INPUT);
+    sensorcore.println(F("Testing device connections..."));
+    sensorcore.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+    if (mpu.testConnection())
+    {
+        selftest[0] = true;
+        mpu_ready = true;
+    }
+    sensorcore.println(F("Initializing DMP..."));
     devStatus = mpu.dmpInitialize();
 
-    // supply your own gyro offsets here, scaled for min sensitivity
-    mpu.setXGyroOffset(220);
-    mpu.setYGyroOffset(76);
-    mpu.setZGyroOffset(-85);
-    mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+    mpu.setXGyroOffset(82);
+    mpu.setYGyroOffset(-52);
+    mpu.setZGyroOffset(-29);
+    mpu.setXAccelOffset(-2570);
+    mpu.setYAccelOffset(-221);
+    mpu.setZAccelOffset(1408);
 
-    // make sure it worked (returns 0 if so)
     if (devStatus == 0)
     {
-        // Calibration Time: generate offsets and calibrate our MPU6050
         mpu.CalibrateAccel(6);
         mpu.CalibrateGyro(6);
         mpu.PrintActiveOffsets();
-        // turn on the DMP, now that it's ready
+        sensorcore.println(F("Enabling DMP..."));
         mpu.setDMPEnabled(true);
-
-        // enable Arduino interrupt detection
-        // sensorserial.print(digitalPinToInterrupt(INTERRUPT_PIN));
-        // sensorserial.println(F(")..."));
-        
-        // attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING); // pin interrupt non connesso
+        sensorcore.print(F("Enabling interrupt detection - Arduino external interrupt"), digitalPinToInterrupt(INTERRUPT_PIN));
+        attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
         mpuIntStatus = mpu.getIntStatus();
-
-#ifdef ENABLE_LOGGING
-        sensorscore.println((char *)"DMP READY");
-#endif
+        sensorcore.println(F("DMP ready! Waiting for first interrupt..."));
         dmpReady = true;
-
+        selftest[1] = true;
+        sensorcore.println("DMP OK");
         packetSize = mpu.dmpGetFIFOPacketSize();
     }
     else
     {
-        sensorscore.println((char *)"DMP FAIL");
+        sensorcore.print(F("DMP Initialization failed - code"), devStatus);
+        sensorcore.println("MPU FAIL");
     }
     /* #endregion */
 
     pinMode(RPM_SENS, INPUT);
     pinMode(BAT, INPUT);
 
-    if (getBatVoltage() < 12.0)
-        sensorscore.lowBat();
+    sensor_packetptr = sensormux.getPacketPointer();
+
+    //if (getBatADC() > 0)
+    //{
+    //    selftest[2] = true;
+    //    sensorcore.println("BAT OK");
+        //if (getBatADC() < 2740)
+        //    sensorcore.lowBat();
+    //}
 }
 
 int Sensors::getFWDInfrared()
@@ -243,172 +354,67 @@ void Sensors::update()
 {
     uint32_t start_time = micros();
 
-    if (millis() - TEMP_TIME > 30000)
+    if (millis() - TEMP_TIME > 10000)
     {
         TEMP_TIME = millis();
         /*float raw_air_temp = mpu.getTemperature();
         float air_temp = (raw_air_temp / 340) + 36.53; // da datasheet MPU6050*/
-        if (getBatVoltage() < 12.0)
-            sensorscore.lowBat();
+        //if (getBatADC() < 2770)
+        //    sensorcore.lowBat();
     }
 
-    if (Infrared.enable && ENABLE_OBSTACLE_AVOIDANCE)
+    // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
+    if (sensor_packet_ispolling)
     {
-        if (millis() - Infrared.timer > 10)
+        senspacket.us_f = *(sensor_packetptr);
+        senspacket.us_l = *(sensor_packetptr + 1);
+        senspacket.us_r = *(sensor_packetptr + 2);
+        senspacket.ir_f = *(sensor_packetptr + 3);
+        senspacket.ir_l = *(sensor_packetptr + 4);
+        senspacket.bat = *(sensor_packetptr + 5);
+        senspacket.read_digital = *(sensor_packetptr + 6);
+        senspacket.read_analog = *(sensor_packetptr + 7);
+        senspacket.packet_id = *(sensor_packetptr + 8);
+
+        if (senspacket.packet_id > senspacket.last_packet_id)
         {
-            uint8_t FWD_IR = !sensormux.readDigital(IR_F);
-
-            if (FWD_IR == 1)
+            sensorcore.println("PACKET ID", senspacket.packet_id);
+            sensorcore.println("LAST PACKET ID", senspacket.last_packet_id);
+            if (senspacket.us_f < US_SENS_DST_TRIG)
             {
-                // ferma il robot se il sensore infrarossi anteriore rileva un ostacolo
-                sensorscore.println((char *)"(SENS) IR SENSOR STOP");
-                FWD_IR = 0;
-                stop_sensor_type = INFRARED;
-                stop_sensor_direction = FRONT;
-                if (Infrared.request_type == MOTORS)
-                {
-                    sensorsnav.obstacleDetectedBeforeMoving(stop_sensor_type, stop_sensor_direction);
-                    sensormotors.stop();
-                    stopMoving();
-                }
-                else if (US_REQ.request_type == DEFAULT)
-                {
-                    sensorsnav.obstacleDetectedWhileMoving(stop_sensor_type, stop_sensor_direction);
-                    sensormotors.stop();
-                    stopMoving();
-                }
-                Infrared.enable = false;
-                //Infrared.obstacle_detected = true;
-            }
-            else
-            {
-                // se il sensore infrarossi non rileva niente, usa il sensore ultrasuoni
-                getFrontUSObstacle(Infrared.request_type);
-                Infrared.enable = false;
-                //Infrared.obstacle_detected = false;
-            }
-        }
-    }
-
-    if (Ultrasonic.enable)
-    {
-        //sensorscore.println("US ENABLE");
-        if (US_REQ.active)
-        {
-            //sensorscore.println("US REQ ACTIVE");
-            if (US_REQ.returned)
-            {
-                //sensorscore.println("US REQ RETURNED");
-                US_REQ.returned = false;
-                US_REQ.active = false;
-
-                if (!US_REQ.confirm_distance)
-                {
-                    //sensorscore.println("US REQ !CONFIRM DISTANCE");
-                    if (US_REQ.distance_measured < US_SENS_DST_TRIG)
-                    {
-                        US_REQ.confirm_distance = true;
-                        Ultrasonic.get_front_obstacle = false;
-                        US_REQ.active = true;
-                        sensormux.requestUSDistance(US_REQ.sensor_direction);
-                    }
-                    else
-                        Ultrasonic.check_next = true;
-                }
+                if (!senspacket.check_next_dst)
+                    senspacket.check_next_dst = true;
                 else
                 {
-                    //sensorscore.println("US CONFIRM DISTANCE");
-                    if (US_REQ.distance_measured < US_SENS_DST_TRIG)
-                    {
-                        //sensorscore.println("US REQ DST < SENS TRIG");
-                        //US_front_obstacle_detected = true;
-                        stop_sensor_direction = US_REQ.sensor_direction;
-                        stop_sensor_type = ULTRASONIC;
-                        US_REQ.confirm_distance = false;
-                        sensorscore.println((char *)"(SENS) US SENSOR STOP", US_REQ.distance_measured);
-                        if (Infrared.request_type == MOTORS)
-                        {
-                            sensorsnav.obstacleDetectedBeforeMoving(stop_sensor_type, stop_sensor_direction);
-                            sensormotors.stop();
-                            stopMoving();
-                        }
-                        else if (US_REQ.request_type == DEFAULT)
-                        {
-                            sensorsnav.obstacleDetectedWhileMoving(stop_sensor_type, stop_sensor_direction);
-                            sensormotors.stop();
-                            stopMoving();
-                        }
-                        Ultrasonic.enable = false;
-                    }
-                    else
-                    {
-                        Ultrasonic.check_next = true;
-                        US_REQ.confirm_distance = false;
-                        Ultrasonic.get_front_obstacle = true;
-                    }
+                    Serial.println("US F STOP");
+                    senspacket.check_next_dst = false;
+                }
+            }
+            else if (senspacket.us_l < US_SENS_DST_TRIG)
+            {
+                if (!senspacket.check_next_dst)
+                    senspacket.check_next_dst = true;
+                else
+                {
+                    Serial.println("US L STOP");
+                    senspacket.check_next_dst = false;
+                }
+            }
+            else if (senspacket.us_r < US_SENS_DST_TRIG)
+            {
+                if (!senspacket.check_next_dst)
+                    senspacket.check_next_dst = true;
+                else
+                {
+                    Serial.println("US R STOP");
+                    senspacket.check_next_dst = false;
                 }
             }
         }
 
-        if (Ultrasonic.get_front_obstacle)
-        {
-            if (!Ultrasonic.FRONT_checked)
-            {
-                if (millis() - Ultrasonic.time_ref > 10)
-                {
-                    Ultrasonic.time_ref = millis();
-                    US_REQ.active = true;
-                    US_REQ.sensor_direction = FRONT;
-                    US_REQ.request_type = Ultrasonic.request_type;
-                    Ultrasonic.FRONT_checked = true;
-                    sensormux.requestUSDistance(FRONT);
-                }
-            }
-            else if (!Ultrasonic.RIGHT_checked)
-            {
-                if (Ultrasonic.check_next)
-                {
-                    if (millis() - Ultrasonic.time_ref > 10)
-                    {
-                        Ultrasonic.time_ref = millis();
-                        Ultrasonic.check_next = false;
-                        US_REQ.active = true;
-                        US_REQ.sensor_direction = RIGHT;
-                        US_REQ.request_type = Ultrasonic.request_type;
-                        Ultrasonic.RIGHT_checked = true;
-                        sensormux.requestUSDistance(RIGHT);
-                    }
-                }
-            }
-            else if (!Ultrasonic.LEFT_checked)
-            {
-                if (Ultrasonic.check_next)
-                {
-                    if (millis() - Ultrasonic.time_ref > 10)
-                    {
-                        Ultrasonic.time_ref = millis();
-                        Ultrasonic.check_next = false;
-                        US_REQ.active = true;
-                        US_REQ.sensor_direction = LEFT;
-                        US_REQ.request_type = Ultrasonic.request_type;
-                        Ultrasonic.LEFT_checked = true;
-                        sensormux.requestUSDistance(LEFT);
-                    }
-                }
-            }
-            else if (Ultrasonic.check_next)
-            {
-                Ultrasonic.check_next = false;
-                Ultrasonic.LEFT_checked = false;
-                Ultrasonic.RIGHT_checked = false;
-                Ultrasonic.FRONT_checked = false;
-                Ultrasonic.get_front_obstacle = false;
-                Ultrasonic.enable = false;
-                US_REQ.active = false;
-            }
-        }
+        senspacket.last_packet_id = senspacket.packet_id;
     }
-    
+
     // le funzioni aspettano 100ms prima di controllare se c'è movimento, così danno il tempo al robot di cambiare direzione
     if (moving && !go_once_movement_sensor)
     {
@@ -416,9 +422,7 @@ void Sensors::update()
         go_once_movement_sensor = true;
     }
     else if (!moving)
-    {
         go_once_movement_sensor = false;
-    }
 
     // controllo moving ogni ms
     if (millis() - time3 > 1)
@@ -431,8 +435,6 @@ void Sensors::update()
                 {
                     if (moving)
                     {
-                        /* #region  Controlla se il robot viene fermato dall'esterno */
-
                         // IL VALORE DI HEADING È STATO MOLTIPLICATO PER 100 NELLA FUNZIONE getHeading()
 
                         int32_t heading = getHeading();
@@ -443,12 +445,12 @@ void Sensors::update()
                         if (direction == 't')
                         {
                             moving = false;
+                            sensor_packet_ispolling = false;
                             return;
                         }
 
                         if (direction == 'w')
                         {
-                            /* #region  Check se il robot viene fermato di colpo */
                             if (filtering_active)
                             {
                                 forward_filter_acc_data += a;
@@ -460,18 +462,17 @@ void Sensors::update()
                                     times_acc_data_is_gathered = 0;
                                     filtering_active = false;
 
-                                    if (avg_acc > 350)
+                                    if (avg_acc > SUDDEN_STOP_ACCELERATION)
                                     {
-                                        sensorserial.println("TYPE_SUDDEN_STOP");
+                                        sensorcore.println(F("(Sensors.cpp) SUDDEN STOP"));
                                         sensorstatus.setError(true);
-                                        sensormotors.stop();
-                                        stopMoving();
-                                        sensorsnav.suddenStop(direction);
+                                        sensornav.externalStop();
+                                        sensornav.suddenStop(direction);
                                         return;
                                     }
                                 }
                             }
-                            else if (a > 350)
+                            else if (a > SUDDEN_STOP_ACCELERATION)
                             {
                                 if (!filtering_active)
                                 {
@@ -483,34 +484,32 @@ void Sensors::update()
                                     }
                                 }
                             }
-                            /* #endregion */
                         }
                         else if (direction == 's')
                         {
-                            /* #region  Check se il robot viene fermato di colpo */
                             if (filtering_active)
                             {
                                 a *= -1;
                                 backwards_filter_acc_data += a;
                                 times_acc_data_is_gathered++;
-                                if (times_acc_data_is_gathered > 10)
+                                if (times_acc_data_is_gathered > 15)
                                 {
                                     avg_acc = backwards_filter_acc_data / times_acc_data_is_gathered;
                                     backwards_filter_acc_data = 0;
                                     times_acc_data_is_gathered = 0;
                                     filtering_active = false;
 
-                                    if (avg_acc > 350)
+                                    if (avg_acc > SUDDEN_STOP_ACCELERATION)
                                     {
+                                        sensorcore.println(F("(Sensors.cpp) SUDDEN STOP"));
                                         sensorstatus.setError(true);
-                                        sensormotors.stop();
-                                        stopMoving();
-                                        sensorsnav.suddenStop(direction);
+                                        sensornav.externalStop();
+                                        sensornav.suddenStop(direction);
                                         return;
                                     }
                                 }
                             }
-                            else if (a < -350)
+                            else if (a < -SUDDEN_STOP_ACCELERATION)
                             {
                                 a *= -1;
                                 if (!filtering_active)
@@ -523,53 +522,88 @@ void Sensors::update()
                                     }
                                 }
                             }
-                            /* #endregion */
                         }
                         else if (direction == 'd' || direction == 'a')
                         {
-                            /* #region  Check se il robot viene fermato di colpo */
-                            /* #region  Get Absolute Heading */
                             if (heading < 0)
-                            {
                                 heading *= -1;
-                            }
-
                             if (last_heading < 0)
-                            {
                                 last_heading_stop_check *= -1;
-                            }
-                            /* #endregion */
 
                             if (heading != last_heading_stop_check)
                             {
-                                /* #region  Get Absolute Difference */
                                 int32_t difference = heading - last_heading_stop_check;
 
                                 if (difference < 0)
-                                {
                                     difference *= -1;
-                                }
-                                /* #endregion */
 
                                 if (difference < 5)
                                 {
                                     sensorstatus.setError(true);
-                                    sensormotors.stop();
-                                    stopMoving();
-                                    sensorscore.println((char *)"(SENS) NOT ROTATING");
+                                    sensornav.externalStop();
+                                    sensorcore.println(F("(Sensors.cpp) NOT ROTATING"));
                                     return;
                                 }
                             }
 
                             last_heading_stop_check = heading;
-                            /* #endregion */
                         }
-                        /* #endregion */
 
                         if (direction == 'w')
                         {
-                            if (!Infrared.enable && !Ultrasonic.enable && !US_REQ.active)
-                                checkFrontObstacle();
+                            
+                        }
+                    }
+
+                    // controlla se il robot sta ruotando, se è stata chiamata la funzione checkRotation
+                    if (check_rotation)
+                    {
+                        if (rotation_checked < rotations_to_check)
+                        {
+                            rotation_checked++;
+
+                            // TUTTI I VALORI SONO MOLTIPLICATI PER 100 DALLA FUNZIONE getHeading()
+
+                            int32_t heading = getHeading();
+
+                            if (rotation_checked > rotations_to_check - 25)
+                            {
+                                if (heading < 0)
+                                    heading *= -1;
+                                if (last_heading < 0)
+                                    last_heading *= -1;
+
+                                int32_t difference = heading - last_heading;
+
+                                if (difference < 0)
+                                    difference *= -1;
+
+                                if (difference < 5)
+                                {
+                                    not_rotating = true;
+                                    rotation_checked = 0;
+                                }
+
+                                if (not_rotating)
+                                {
+                                    sensorstatus.setError(true);
+                                    sensornav.externalStop();
+                                    rotation_checked = 0;
+                                    sensorcore.println(F("(Sensors.cpp) CANNOT START ROTATE"));
+                                }
+                            }
+
+                            last_heading = heading;
+                        }
+                        else
+                        {
+                            check_rotation = false;
+                            not_rotating = false;
+                            rotation_checked = 0;
+                            last_heading = 0;
+                            moving = true;
+                            sensor_packet_ispolling = true;
+                            sensormux.sensPacketUpdate(true);
                         }
                     }
                 }
@@ -584,17 +618,11 @@ void Sensors::update()
 
                     int a = 0;
                     if (movement_check_axis == 'x')
-                    {
                         a = getAccX();
-                    }
                     else if (movement_check_axis == 'y')
-                    {
                         a = getAccY();
-                    }
                     else if (movement_check_axis == 'z')
-                    {
                         a = getAccZ();
-                    }
 
                     if (a < 275 && a > -275)
                     {
@@ -603,10 +631,9 @@ void Sensors::update()
 
                     if (not_moving_warnings > movements_to_check - 25)
                     {
-                        //sensorscore.printTimestamp();
-                        //sensorserial.print("TYPE_CANNOT_START_MOVE:1;");
+                        sensorcore.println(F("(Sensors.cpp) CANNOT START MOVE"));
                         sensorstatus.setError(true);
-                        sensormotors.stop();
+                        sensornav.externalStop();
                     }
                 }
                 else
@@ -615,68 +642,8 @@ void Sensors::update()
                     not_moving_warnings = 0;
                     movement_checked = 0;
                     moving = true;
-                }
-            }
-
-            // controlla se il robot sta ruotando, se è stata chiamata la funzione checkRotation
-            if (check_rotation)
-            {
-                if (rotation_checked < rotations_to_check)
-                {
-                    rotation_checked++;
-
-                    // TUTTI I VALORI SONO MOLTIPLICATI PER 100 DALLA FUNZIONE getHeading()
-
-                    int32_t heading = getHeading();
-
-                    if (rotation_checked > rotations_to_check - 25)
-                    {
-                        /* #region  Get Absolute Heading */
-                        if (heading < 0)
-                        {
-                            heading *= -1;
-                        }
-
-                        if (last_heading < 0)
-                        {
-                            last_heading *= -1;
-                        }
-                        /* #endregion */
-
-                        if (heading != last_heading)
-                        {
-                            /* #region  Get Absolute Difference */
-                            int32_t difference = heading - last_heading;
-
-                            if (difference < 0)
-                            {
-                                difference *= -1;
-                            }
-                            /* #endregion */
-
-                            if (difference < 5)
-                            {
-                                not_rotating = true;
-                                sensorscore.println((char *)"(SENS) CANNOT START ROTATE");
-                            }
-                        }
-
-                        if (not_rotating)
-                        {
-                            sensorstatus.setError(true);
-                            sensormotors.stop();
-                        }
-                    }
-
-                    last_heading = heading;
-                }
-                else
-                {
-                    check_rotation = false;
-                    not_rotating = false;
-                    rotation_checked = 0;
-                    last_heading = 0;
-                    moving = true;
+                    sensor_packet_ispolling = true;
+                    sensormux.sensPacketUpdate(true);
                 }
             }
         }
@@ -684,10 +651,13 @@ void Sensors::update()
         {
             // se i sensori di movimento sono disabilitati, usa solo i sensori di ostacoli per fermare il robot
             char direction = sensormotors.getDirection();
-            if (direction == 'w')
+            if (direction == 'w' && ENABLE_OBSTACLE_AVOIDANCE)
             {
-                if (!Infrared.enable && !Ultrasonic.enable && !US_REQ.active)
-                    checkFrontObstacle();
+                if (!sensor_packet_ispolling)
+                {
+                    sensor_packet_ispolling = true;
+                    sensormux.sensPacketUpdate(true);
+                }
             }
         }
 
@@ -708,7 +678,7 @@ void Sensors::update()
                 uint16_t revolution_time = encoder_period * ENCODER_TEETH;
                 float encoder_current_rps = 1000.00 / (float)revolution_time;
                 encoder.wheel_current_rps = encoder_current_rps * GEAR_RATIO;
-                encoder.wheel_current_spd = encoder.wheel_circumference * encoder.wheel_current_rps;
+                encoder.wheel_current_spd = encoder.wheel_circumference * encoder.wheel_current_rps; // mm/s
 
                 if (encoder.last_wheel_spd != encoder.wheel_current_spd)
                 {
@@ -723,7 +693,7 @@ void Sensors::update()
 
                     uint16_t delta_t_ms = time_to_subtract - encoder.time4;
 
-                    // S(t) = S0 + vt
+                    // S(t) = S + S0 + vt
                     encoder.traveled_distance_raw += encoder.wheel_current_spd * delta_t_ms;
                     encoder.traveled_distance = encoder.traveled_distance_raw / 1000000;
                     encoder.last_traveled_distance = encoder.wheel_current_spd * delta_t_ms / 1000000;
@@ -738,8 +708,91 @@ void Sensors::update()
 
     t2 = micros() - start_time;
 
+    if (setzero.active)
+    {
+        if (setzero.arr_idx != 49)
+        {
+            getValues();
+            if (accX != setzero.old_accX)
+            {
+                setzero.old_accX = accX;
+                setzero.arrX[setzero.arr_idx] = accX;
+                setzero.arrY[setzero.arr_idx] = accY;
+                setzero.arrZ[setzero.arr_idx] = accZ;
+                setzero.arr_idx++;
+            }
+        }
+        else
+        {
+            setzero.active = false;
+            setzero.arr_idx = 0;
+            // prende il valore massimo e minimo per ogni asse
+            for (int i = 0; i < 50; i++)
+            {
+                if (setzero.arrX[i] > setzero.maxX)
+                    setzero.maxX = setzero.arrX[i];
+                if (setzero.arrY[i] > setzero.maxY)
+                    setzero.maxY = setzero.arrY[i];
+                if (setzero.arrZ[i] > setzero.maxZ)
+                    setzero.maxZ = setzero.arrZ[i];
+
+                if (setzero.arrX[i] < setzero.minX)
+                    setzero.minX = setzero.arrX[i];
+                if (setzero.arrY[i] < setzero.minY)
+                    setzero.minY = setzero.arrY[i];
+                if (setzero.arrZ[i] < setzero.minZ)
+                    setzero.minZ = setzero.arrZ[i];
+            }
+
+            // aggiunge e sottrae 10 a massimo e minimo per dare più margine
+            setzero.maxX += 10;
+            setzero.maxY += 10;
+            setzero.maxZ += 10;
+            setzero.minX -= 10;
+            setzero.minY -= 10;
+            setzero.minZ -= 10;
+
+            if (setzero.maxX == 0)
+                setzero.maxX = setzero.minX + 10;
+            if (setzero.maxY == 0)
+                setzero.maxY = setzero.minY + 10;
+            if (setzero.maxZ == 0)
+                setzero.maxZ = setzero.minZ + 10;
+
+            zeroX += accX * -1;
+            zeroY += accY * -1;
+            zeroZ += accZ * -1;
+            zeroW += yaw * -1;
+            zeroP += pitch * -1;
+            zeroR += roll * -1;
+            maxX = setzero.maxX;
+            maxY = setzero.maxY;
+            maxZ = setzero.maxZ;
+            minX = setzero.minX;
+            minY = setzero.minY;
+            minZ = setzero.minZ;
+
+            setzero = {}; // reset di tutti i valori temporeanei per la calibrazione
+
+            /* #region  Log valori di calibrazione */
+            sensorcore.println(F("MAX X"), maxX);
+            sensorcore.println(F("MAX Y"), maxY);
+            sensorcore.println(F("MAX Z"), maxZ);
+            sensorcore.println(F("MIN X"), minX);
+            sensorcore.println(F("MIN Y"), minY);
+            sensorcore.println(F("MIN Z"), minZ);
+            sensorcore.println(F("ZERO X"), zeroX);
+            sensorcore.println(F("ZERO Y"), zeroY);
+            sensorcore.println(F("ZERO Z"), zeroZ);
+            sensorcore.println(F("ZERO W"), zeroW);
+            sensorcore.println(F("ZERO P"), zeroP);
+            sensorcore.println(F("ZERO R"), zeroR);
+            /* #endregion */
+        }
+    }
+
     /*if (sensor_autorun)
-        sensorsnav.setLateralObstacle(getLeftInfrared());*/
+        sensornav.setLateralObstacle(getLeftInfrared());*/
 }
 
 uint32_t Sensors::getTime()
@@ -747,36 +800,28 @@ uint32_t Sensors::getTime()
     return t2;
 }
 
+void Sensors::setZero()
+{
+    setzero.active = true;
+    sensorserial.println();
+    sensorserial.println("CALIBRATING");
+    sensorserial.println();
+    Serial.println();
+    Serial.println("CALIBRATING");
+    Serial.println();
+}
+
 void Sensors::getValues()
 {
-    // if programming failed, don't try to do anything
-    if (!dmpReady)
-        return;
-    // read a packet from FIFO
     if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer))
-    { // Get the Latest packet
-
-#ifdef OUTPUT_READABLE_YAWPITCHROLL
-      // display Euler angles in degrees
+    {
         mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
         mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-        yaw = ypr[0] * 180 / M_PI;
-        pitch = ypr[1] * 180 / M_PI;
-        roll = ypr[2] * 180 / M_PI;
-#ifdef ENABLE_LOGGING
-        /*sensorserial.print("TYPE_YAW_PITCH_ROLL:");
-        sensorserial.print(yaw);
-        sensorserial.print(",");
-        sensorserial.print(pitch);
-        sensorserial.print(",");
-        sensorserial.print(roll);
-        sensorserial.print(";");*/
-#endif
-#endif
+        yaw = ypr[0] * 180 / PI;
+        pitch = ypr[1] * 180 / PI;
+        roll = ypr[2] * 180 / PI;
 
-#ifdef OUTPUT_READABLE_REALACCEL
-        // display real acceleration, adjusted to remove gravity
         mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetAccel(&aa, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
@@ -784,116 +829,12 @@ void Sensors::getValues()
         accX = aaReal.x;
         accY = aaReal.y;
         accZ = aaReal.z;
-#ifdef ENABLE_LOGGING
-        /*sensorserial.print("TYPE_ACC_XYZ:");
-        sensorserial.print(aaReal.x);
-        sensorserial.print(",");
-        sensorserial.print(aaReal.y);
-        sensorserial.print(",");
-        sensorserial.print(aaReal.z);
-        sensorserial.print(";");*/
-#endif
-#endif
     }
-}
-
-void Sensors::setZero()
-{
-    sensorserial.println();
-    sensorserial.println("SET ZERO");
-    sensorserial.println();
-    // aggiorna i valori 10 volte così si stabilizzano
-    for (uint8_t i = 0; i < 10; i++)
-    {
-        getValues();
-        delay(1);
-    }
-
-    // ottiene i valori di accelerazione e inclinazione sugli assi 50 volte in modo da prendere il valore massime e minimo
-    // così da avere una finestra per lo 0
-
-    for (uint8_t i = 0; i < 50; i++)
-    {
-        float X = getAccX();
-        float Y = getAccY();
-        float Z = getAccZ();
-
-        // aggiunge e sottrae 10 così lo 0 è più stabile
-        if (X > maxX)
-            maxX = X + 10;
-        if (Y > maxY)
-            maxY = Y + 10;
-        if (Z > maxZ)
-            maxZ = Z + 10;
-
-        if (X < minX)
-            minX = X - 10;
-        if (Y < minY)
-            minY = Y - 10;
-        if (Z < minZ)
-            minZ = Z - 10;
-
-        delay(1);
-    }
-
-    if (maxX == 0)
-        maxX = minX + 10;
-    if (maxY == 0)
-        minY = minY + 10;
-    if (maxZ == 0)
-        minZ = minZ + 10;
-
-    delay(100);
-
-    if (dmpReady)
-    {
-        zeroX += getAccX() * -1;
-        zeroY += getAccY() * -1;
-        zeroZ += getAccZ() * -1;
-        zeroP += getPitch() * -1;
-        zeroR += getRoll() * -1;
-        zeroW += getHeading() * -1;
-    }
-
-// log di tutti i valori massimi e minimi nella porta seriale
-#ifdef ENABLE_LOGGING
-    sensorscore.printStartDataPacket();
-    sensorscore.printTimestamp();
-    sensorserial.print("TYPE_ACC_MAX_XYZ:");
-    sensorserial.print(maxX);
-    sensorserial.print(",");
-    sensorserial.print(maxY);
-    sensorserial.print(",");
-    sensorserial.print(maxZ);
-    sensorserial.print(";");
-    sensorserial.print("TYPE_ACC_MIN_XYZ:");
-    sensorserial.print(minX);
-    sensorserial.print(",");
-    sensorserial.print(minY);
-    sensorserial.print(",");
-    sensorserial.print(minZ);
-    sensorserial.print(";");
-    sensorserial.print("TYPE_ZERO_XYZ_YPR:");
-    sensorserial.print(zeroX);
-    sensorserial.print(",");
-    sensorserial.print(zeroY);
-    sensorserial.print(",");
-    sensorserial.print(zeroZ);
-    sensorserial.print(",");
-    sensorserial.print(zeroW);
-    sensorserial.print(",");
-    sensorserial.print(zeroP);
-    sensorserial.print(",");
-    sensorserial.print(zeroR);
-    sensorserial.print(";");
-    sensorscore.printStopDataPacket();
-#endif
 }
 
 int Sensors::getAccX()
 {
     getValues();
-
     int accel = accX;
     if (accel > maxX || accel < minX)
     {
@@ -903,15 +844,12 @@ int Sensors::getAccX()
         return accel;
     }
     else
-    {
         return 0; // ritorna 0 se l'accelerazione è dentro la finestra dello zero
-    }
 }
 
 int Sensors::getAccY()
 {
     getValues();
-
     int accel = accY;
     if (accel > maxY || accel < minY)
     {
@@ -927,7 +865,6 @@ int Sensors::getAccY()
 int Sensors::getAccZ()
 {
     getValues();
-
     int accel = aaReal.z;
     if (accel > maxZ || accel < minZ)
     {
@@ -1007,10 +944,6 @@ void Sensors::checkMovement(char axis)
     check_movement = true;
     check_rotation = false;
     movement_check_axis = axis;
-    Ultrasonic.check_next = false;
-    Ultrasonic.LEFT_checked = false;
-    Ultrasonic.RIGHT_checked = false;
-    Ultrasonic.FRONT_checked = false;
 }
 
 void Sensors::checkRotation()
@@ -1019,14 +952,18 @@ void Sensors::checkRotation()
     check_movement = false;
 }
 
-void Sensors::stopMoving()
+void Sensors::resetMovementVars()
 {
     moving = false;
-    Ultrasonic.enable = false;
-    US_REQ.active = false;
-    not_rotating = true;
+    not_rotating = false;
     check_rotation = false;
     check_movement = false;
+    rotation_checked = 0;
+    not_moving_warnings = 0;
+    movement_checked = 0;
+    times_acc_data_is_gathered = 0;
+    sensor_packet_ispolling = false;
+    sensormux.sensPacketUpdate(false);
 }
 
 void Sensors::setMotorsRotating()
@@ -1094,13 +1031,21 @@ float Sensors::getLastTraveledDistance()
     return encoder.last_traveled_distance;
 }
 
-float Sensors::getBatVoltage()
+uint16_t Sensors::getBatADC()
 {
     float tot_voltage = 0.00;
-    uint64_t start_time = micros();
     // tempo per ottenere le misurazioni: circa 6ms
     for (int i = 0; i < 50; i++)
         tot_voltage += analogRead(BAT);
-    uint64_t diff = micros() - start_time;
-    return tot_voltage / 11475;
+    return tot_voltage / 50;
+}
+
+void Sensors::setMPUBusy()
+{
+    mpu_busy = true;
+}
+
+void Sensors::setMPUReady()
+{
+    mpu_busy = false;
 }

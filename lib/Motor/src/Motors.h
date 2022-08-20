@@ -19,6 +19,10 @@ class Motors
         void backwards();
         void right();
         void left();
+        /**
+         * @brief Chiama automaticamente sensors.resetMovementVars()
+         * 
+         */
         void stop();
         char getDirection();
 

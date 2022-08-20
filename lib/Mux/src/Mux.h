@@ -51,6 +51,19 @@ class Mux
         uint16_t fastRead();
 
         float requestUSDistance(uint8_t sensor);
+
+        /**
+         * @return uint64_t* Puntatore all'array che contiene i dati del multiplexer
+         */
+        uint64_t* getPacketPointer();
+
+        /**
+         * Abilita o disabilita il polling del pacchetto dati dei sensori
+         * Frequenza di aggiornamento: ~50Hz
+         *
+         * US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
+         */
+        void sensPacketUpdate(bool polling_mode);
 };
 
 #endif

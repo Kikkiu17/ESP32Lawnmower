@@ -9,7 +9,10 @@ class Core
         void printTimestamp();
         void printStartDataPacket();
         void printStopDataPacket();
-        void println(char* TYPE, float VALUE = -25565);
+        void println(const char *TYPE, float VALUE = -25565);
+        void print(const char *TYPE, float VALUE = -25565);
+        void print(const __FlashStringHelper* TYPE, float VALUE = -25565);
+        void println(const __FlashStringHelper* TYPE, float VALUE = -25565);
         void lowBat();
 };
 

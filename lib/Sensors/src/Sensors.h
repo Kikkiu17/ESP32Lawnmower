@@ -2,10 +2,6 @@
 #ifdef _SENSORS_H_
 
 #include <Arduino.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
-#include <Wire.h>
-#include "I2Cdev.h"
 #include <SETTINGS.h>
 
 class Sensors
@@ -23,7 +19,12 @@ class Sensors
         int32_t getHeading();
         void checkMovement(char);
         void checkRotation();
-        void stopMoving();
+
+        /**
+         * @brief Reset delle variabili di movimento - non chiama motors.stop()
+         * 
+         */
+        void resetMovementVars();
 
         /**
          * @brief Controlla se c'è un ostacolo davanti al robot
@@ -47,12 +48,12 @@ class Sensors
         float getLastTraveledDistance();
         void resetTraveledDistance();
         void setAutoRun(bool state);
-
         void returnUSDistance(float distance);
-
         uint32_t getTime();
-
-        float getBatVoltage();
+        uint16_t getBatADC();
+        struct SelfTest* getSelfTestResults();
+        void setMPUBusy();
+        void setMPUReady();
 
     private:
         /**

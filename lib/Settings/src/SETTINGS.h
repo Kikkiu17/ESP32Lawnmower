@@ -1,6 +1,7 @@
+#define USING_USB_SERIAL true
+
 /* #region  Pin diretti ESP */
 #define RPM_SENS 5
-#define BAT 34
 
 #define RUNNING_LED 12
 #define ERROR_LED 14
@@ -17,6 +18,7 @@
 #define MUX1 4
 #define MUX2 0
 #define MUX3 2
+#define INTERRUPT_PIN 34
 // #define MUX_ENABLE 17 NC in PCB
 /* #endregion */
 
@@ -29,9 +31,10 @@
 #define US_TRIG_R 5
 #define IR_F 6
 #define IR_L 7
+#define BAT 8
 /* #endregion */
 
-/* #region  Giroscopio e accelerometro */
+/* #region  IMU */
 #define ACCEL_X_ERROR 0.46
 #define ACCEL_Y_ERROR 0.32
 #define ACCEL_Z_ERROR 0.38
@@ -40,8 +43,8 @@
 #define GYRO_SENSITIVITY 0.02  //± questo valore
 
 #define INVERT_ACC_X false
-#define INVERT_ACC_Y true
-#define INVERT_ACC_Z true
+#define INVERT_ACC_Y false
+#define INVERT_ACC_Z false
 #define INVERT_YAW false
 #define INVERT_PITCH false
 #define INVERT_ROLL false
@@ -49,17 +52,29 @@
 
 /* #region  Altre informazioni */
 // #define ENABLE_WEBSERIAL
+#define ENCODER_TEETH 28
+#define WHEEL_DIAMETER 122.5 // mm - old: 91
+#define GEAR_RATIO 1 // 1:5 = 0.2 | drive gear teeth : driven gear teeth -- NUOVO: 1:1
+/* #endregion */
 
-#define ENCODER_TEETH 14
-#define WHEEL_DIAMETER 91 // mm
-
-#define ENABLE_OBSTACLE_AVOIDANCE false
+/* #region  Sensors.cpp */
+#define ENABLE_OBSTACLE_AVOIDANCE true
 #define ENABLE_MOVEMENT_SENSORS false
-#define ENABLE_ROTATION_SENSING false
-#define ENABLE_ENCODER false
-#define ENABLE_AUTO_NAVIGATION false
+#define ENABLE_ENCODER true
+
+/**
+ * Accelerazione che il robot subisce quando viene fermato di colpo
+ * 
+ * Moltiplicare la forza G per ottenere l'accelerazione raw dell'IMU
+ */
+#define SUDDEN_STOP_ACCELERATION 450
+/* #endregion */
+
+/* #region  Navigation.cpp */
+#define ENABLE_AUTO_NAVIGATION true // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_ENCODER abilitati
+#define ENABLE_ROTATION_SENSING true
+#define ENABLE_ROTATION_LOOP true // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
 #define ENABLE_BORDERMODE false
-#define GEAR_RATIO 0.2 // 1:5 = 0.2 | drive gear teeth : driven gear teeth
 /* #endregion */
 
 /* #region  Nomi costanti codice */
@@ -71,7 +86,7 @@
 #define BCK 0
 #define MOT_BASE_VAL 255
 #define MOT_MIN_VAL 150
-#define US_SENS_DST_TRIG 10 // cm
+#define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
 #define GLOBAL_NAV_DELAY 150
 #define FRONT 0
 #define BACK 1
@@ -89,4 +104,5 @@
 #define TOGGLE 14
 /* #endregion */
 
+#define SHOW_MODULE_EXECUTION_TIME true
 #define ENABLE_LOGGING // commentare per disabilitare il logging delle informazioni nella porta seriale

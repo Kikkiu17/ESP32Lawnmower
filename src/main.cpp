@@ -27,15 +27,12 @@ Core core;
 NAV robotnav;
 Mux robotmux;
 
-uint32_t ref_time = millis();
 bool status_led = false;
-byte BTData;
 
 void setup()
 {
-  Serial.begin(2000000);
-  SerialBT.begin("ESP32Robot");
-  core.begin();
+  Serial.begin(115200);
+  SerialBT.begin("ESP32ROBOT");
 
   /* #region  WiFi, ElegantOTA */
   WiFi.mode(WIFI_STA);
@@ -51,9 +48,6 @@ void setup()
     digitalWrite(RUNNING_LED, status_led);
   }
 
-  robotstatus.setReady(true);
-  robotmotors.setSpeed(0, MAIN);
-
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(200, "text/plain", "Hi! I am ESP32."); });
 
@@ -65,79 +59,11 @@ void setup()
     WebSerial.msgCallback(recvMsg);
   #endif
   /* #endregion */
+
+  core.begin();
 }
 
 void loop()
 {
-  // controllo robot con bluetooth e porta seriale
-  if (SerialBT.available())
-  {
-    BTData = SerialBT.read();
-    if (BTData == 'w')
-    {
-      core.println((char *)"TYPE_BT_FWD");
-      robotnav.goForward();
-    }
-    else if (BTData == 'a')
-    {
-      core.println((char *)"TYPE_BT_LEFT");
-      robotnav.rotateForDeg(-90);
-    }
-    else if (BTData == 's')
-    {
-      core.println((char *)"TYPE_BT_BCK");
-      robotnav.goBackwards();
-    }
-    else if (BTData == 'd')
-    {
-      core.println((char *)"TYPE_BT_RIGHT");
-      robotnav.rotateForDeg(90);
-    }
-    else if (BTData == 'y')
-    {
-      // inutilizzato
-    }
-    else if (BTData == 'i')
-    {
-      // inutilizzato
-    }
-    else if (BTData == 'o')
-    {
-      // inutilizzato
-    }
-    else if (BTData == 'm')
-    {
-      robotmotors.toggleMainMotor();
-    }
-    else if (BTData == 'p')
-    {
-      ledcWrite(CHANNEL_MAIN, 0);
-    }
-    else if (BTData == 'u')
-    {
-      robotnav.autoRun();
-    }
-    else
-    {
-      core.println((char *)"TYPE_BT_STOP");
-      robotnav.externalStop();
-    }
-  }
-
   core.loop();
-
-  // mostra ogni 250 ms il tempo di esecuzione per ciascun modulo
-  // e lo stato dell'heap
-  /*if (millis() - ref_time > 250)
-  {
-    ref_time = millis();
-    SerialBT.println();
-    core.println((char*)"(MAIN) TIME IN MICROSECONDS (us)");
-    core.println((char *)"(MAIN) TIME TO EXECUTE LOOP OF MOT", robotmotors.getTime());
-    core.println((char *)"(MAIN) TIME TO EXECUTE LOOP OF SENS", robotsensors.getTime());
-    core.println((char *)"(MAIN) TIME TO EXECUTE LOOP OF NAV", robotnav.getTime());
-    core.println((char *)"(MAIN) STATUS OF HEAP FRAGMENTATION");
-    core.println((char *)"(MAIN) MAX HEAP", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-    core.println((char *)"(MAIN) LARGEST BLOCK AVAILABLE", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-  }*/
 }

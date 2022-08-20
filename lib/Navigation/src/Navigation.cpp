@@ -136,597 +136,592 @@ Vectors vectors;
 
 void NAV::update()
 {
-    if (ENABLE_AUTO_NAVIGATION)
+    uint64_t start_time = micros();
+
+    if (going_forward)
     {
-        uint64_t start_time = micros();
+        distance_traveled = NAVSensors.getTraveledDistance();
 
-        if (going_forward)
+        if (UTurn.active)
+            distance_traveled_before_uturn_sudden_stop = distance_traveled;
+
+        if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
-            distance_traveled = NAVSensors.getTraveledDistance();
-
-            if (UTurn.active)
-            {
-                distance_traveled_before_uturn_sudden_stop = distance_traveled;
-            }
-
-            if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
-            {
-                NAVMotors.stop();
-                stop();
-                going_forward = false;
-                gone_forward = true;
-                distance_target_reached = true;
-            }
-        }
-
-        if (going_backwards)
-        {
-            distance_traveled = NAVSensors.getTraveledDistance();
-
-            if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
-            {
-                NAVMotors.stop();
-                stop();
-                going_backwards = false;
-                gone_backwards = true;
-                distance_target_reached = true;
-            }
-        }
-
-        if (obstacle_detected)
-        {
-            NAVCore.println((char *)"(NAV) OBSTACLE DETECTED");
-            obstacle_detected = false;
+            NAVMotors.stop();
+            stop();
             going_forward = false;
-            // non è necessario NAVMotors.stop(), il robot viene fermato automaticamente dalla sensoristica
+            gone_forward = true;
+            distance_target_reached = true;
+        }
+    }
 
-            if (autorun)
+    if (going_backwards)
+    {
+        distance_traveled = NAVSensors.getTraveledDistance();
+
+        if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
+        {
+            NAVMotors.stop();
+            stop();
+            going_backwards = false;
+            gone_backwards = true;
+            distance_target_reached = true;
+        }
+    }
+
+    if (obstacle_detected)
+    {
+        NAVCore.println((char *)"(Navigation.cpp) OBSTACLE DETECTED");
+        obstacle_detected = false;
+        going_forward = false;
+        // non è necessario NAVMotors.stop(), il robot viene fermato automaticamente dalla sensoristica
+
+        if (autorun)
+        {
+            // queste azioni vengono fatte solo se il robot è in modalità AUTO
+            // altrimenti, sono attivi solo i sensori (il robot si ferma a un'ostacolo)
+            if (!BorderMode.active && !BorderMode.completed && ENABLE_BORDERMODE)
             {
-                // queste azioni vengono fatte solo se il robot è in modalità AUTO
-                // altrimenti, sono attivi solo i sensori (il robot si ferma a un'ostacolo)
-                if (!BorderMode.active && !BorderMode.completed && ENABLE_BORDERMODE)
-                {
-                    BorderMode.active = true;
-                    BorderMode.stages = 0;
-                    timer = millis();
-                }
-                else if (BorderMode.active && ENABLE_BORDERMODE)
-                    BorderMode.obstacle_detected = true;
+                BorderMode.active = true;
+                BorderMode.stages = 0;
+                timer = millis();
+            }
+            else if (BorderMode.active && ENABLE_BORDERMODE)
+                BorderMode.obstacle_detected = true;
 
-                if (BorderMode.completed && ENABLE_BORDERMODE)
+            if (BorderMode.completed && ENABLE_BORDERMODE)
+            {
+                if (!UTurn.active)
                 {
-                    if (!UTurn.active)
-                    {
-                        // attiva l'u-turn solo se questo non è in corso
-                        enableUTurn();
-                    }
-                    else
-                    {
-                        // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
-                        // resetta l'u-turn poi continua
-                        disableUTurn();
-                        UTurn.isBlocked = true;
-                    }
+                    // attiva l'u-turn solo se questo non è in corso
+                    enableUTurn();
                 }
-                else if (!ENABLE_BORDERMODE)
+                else
                 {
-                    if (!UTurn.active)
-                    {
-                        // attiva l'u-turn solo se questo non è in corso
-                        enableUTurn();
-                    }
-                    else
-                    {
-                        // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
-                        // resetta l'u-turn poi continua
-                        disableUTurn();
-                        UTurn.isBlocked = true;
-                    }
+                    // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
+                    // resetta l'u-turn poi continua
+                    disableUTurn();
+                    UTurn.isBlocked = true;
+                }
+            }
+            else if (!ENABLE_BORDERMODE)
+            {
+                if (!UTurn.active)
+                {
+                    // attiva l'u-turn solo se questo non è in corso
+                    enableUTurn();
+                }
+                else
+                {
+                    // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
+                    // resetta l'u-turn poi continua
+                    disableUTurn();
+                    UTurn.isBlocked = true;
                 }
             }
         }
+    }
 
-        if (obstacle_detected_before_moving)
-        {
-            obstacle_detected_before_moving = false;
-
-            if (BorderMode.active)
-                BorderMode.obstacle_detected = true;
-        }
+    if (obstacle_detected_before_moving)
+    {
+        obstacle_detected_before_moving = false;
 
         if (BorderMode.active)
+            BorderMode.obstacle_detected = true;
+    }
+
+    if (BorderMode.active)
+    {
+        switch (BorderMode.stages)
         {
-            switch (BorderMode.stages)
+            case 0:
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    BorderMode.stages++;
+                    gone_backwards = false;
+                    rotateForDeg(10);
+                }
+                break;
+            }
+            case 1:
+            {
+                if (rotated)
+                {
+                    if (millis() - timer > GLOBAL_NAV_DELAY)
+                    {
+                        BorderMode.stages++;
+                        rotated = false;
+                        goForward();
+                    }
+                }
+                else
+                    timer = millis();
+                break;
+            }
+            case 2:
+            {
+                if (BorderMode.obstacle_detected)
+                {
+                    if (millis() - timer > GLOBAL_NAV_DELAY)
+                    {
+                        BorderMode.stages = 0;
+                        BorderMode.obstacle_detected = false;
+                    }
+                }
+                else if (BorderMode.lateral_obstacle_detected)
+                {
+                    if (millis() - timer > GLOBAL_NAV_DELAY)
+                    {
+                        BorderMode.stages++;
+                        rotateUntil('r', &BorderMode.lateral_obstacle_detected, false);
+                    }
+                }
+                else
+                    timer = millis();
+                break;
+            }
+            case 3:
+            {
+                if (RotateUntil.done)
+                {
+                    if (millis() - timer > GLOBAL_NAV_DELAY)
+                    {
+                        BorderMode.stages++;
+                        RotateUntil.done = false;
+                        goForward();
+                    }
+                }
+                else
+                    timer = millis();
+                break;
+            }
+            case 4:
+            {
+                if (BorderMode.lateral_obstacle_detected)
+                {
+                    NAVMotors.setSpeed(150, RIGHT);
+                    NAVMotors.setSpeed(255, LEFT);
+                }
+                else
+                {
+                    NAVMotors.setSpeed(150, LEFT);
+                    NAVMotors.setSpeed(255, RIGHT);
+                }
+                break;
+            }
+        }
+    }
+
+    if (RotateUntil.active)
+    {
+        if (RotateUntil.dir == 'r')
+            NAVMotors.right();
+        else
+            NAVMotors.left();
+
+        if (*RotateUntil.var_ptr == RotateUntil.condition)
+        {
+            NAVMotors.stop();
+            stop();
+            RotateUntil.done = true;
+            RotateUntil.active = false;
+        }
+    }
+
+    if (sudden_stop)
+    {
+        sudden_stop = false;
+        going_forward = false;
+        resetMovementVars();
+
+        if (autorun)
+        {
+            if (check_second_sudden_stop)
+            {
+                // se il robot si è fermato di colpo, è andato indietro e ora sta andando avanti;
+                // se viene di nuovo fermato di colpo (entro 1.5 secondi dal primo blocco), allora cambia direzione (abilitando uturn)
+                // questo solo se l'uturn non era già in corso; se lo era, riprende da dove era rimasto
+                NAVSerial.println();
+                NAVSerial.println("CHECK SECOND SUDDEN STOP");
+                if (SuddenStop.whileUturn)
+                {
+                    NAVSerial.println("SUDDENSTOP WHILE UTURN");
+                    if (distance_traveled > 2)
+                    {
+                        NAVSerial.println("DISTANCE TRAVELED OVER 2");
+                        SuddenStop.whileUturn = false;
+                        distance_traveled = distance_traveled_before_uturn_sudden_stop;
+                        UTurn.active = true;
+                        check_second_sudden_stop = false;
+                    }
+                    else if (millis() - SuddenStop.timer <= 3000)
+                    {
+                        NAVSerial.println("DISTANCE TRAVELED LESS THAN 2 AND SUDDENSTOP TIMER LESS THAN 3s");
+                        SuddenStop.whileUturn = false;
+                        check_second_sudden_stop = false;
+                        enableUTurn();
+                    }
+                }
+                else if (millis() - SuddenStop.timer <= 3000)
+                {
+                    check_second_sudden_stop = false;
+                    enableUTurn();
+                }
+            }
+            else
+            {
+                if (UTurn.active)
+                {
+                    NAVCore.println((char *)"(Navigation.cpp) SUDDENSTOP WHILE UTURN");
+                    SuddenStop.whileUturn = true;
+                    // disabilita uturn temporaneamente
+                    UTurn.active = false;
+                }
+                enableSuddenStopAvoid();
+                SuddenStop.stages = 0;
+            }
+        }
+    }
+
+    if (check_second_sudden_stop)
+    {
+        if (distance_traveled > 4)
+            check_second_sudden_stop = false;
+    }
+
+    if (rotating && ENABLE_ROTATION_SENSING)
+    {
+        uint16_t currentHDG = getHDG();
+
+        if (currentHDG > heading_target - 50 && currentHDG < heading_target + 50)
+        {
+            NAVMotors.stop();
+            stop();
+            NAVSensors.resetMovementVars();
+            rotating = false;
+            rotated = true;
+            RotationControl.active = true;
+            RotationControl.top_hdg_border = heading_target + 50;
+            RotationControl.bottom_hdg_border = heading_target - 50;
+            timer = millis();
+        }
+        else if (ENABLE_ROTATION_LOOP)
+        {
+            // 𝑦=140+𝑎𝑥
+            // 𝑎 = 5.3
+
+            int32_t current_hdg = convertHDGTo180(currentHDG);
+            int32_t target_hdg = convertHDGTo180(heading_target);
+
+            int32_t diff = 0;
+
+            if (current_hdg > 0 && target_hdg > 0) // entrambi a destra
+                diff = current_hdg - target_hdg;
+            else if (current_hdg < 0 && target_hdg < 0) // entrambi a sinistra
+                diff = current_hdg - target_hdg;
+            else if ((current_hdg > 0 && target_hdg < 0) || (current_hdg < 0 && target_hdg > 0)) // sono in metà diverse
+            {
+                if (current_hdg < 0)
+                    current_hdg *= -1;
+                if (target_hdg < 0)
+                    target_hdg *= -1;
+                
+                if (current_hdg > 9000 && target_hdg > 9000) // se sono sotto
+                    diff = 36000 - current_hdg - target_hdg;
+                else if (current_hdg < 9000 && target_hdg < 9000) // se sono sopra
+                    diff = current_hdg + target_hdg;
+            }
+
+            if (diff < 0)
+                diff *= -1;
+
+            uint8_t spd;
+            if (diff < 3558)
+            {
+                spd = 140 + 3.2 * (diff / 100);
+                NAVMotors.setSpeed(spd, BOTH);
+            }
+            else
+                NAVMotors.setSpeed(255, BOTH);
+        }
+    }
+
+    if (UTurn.active)
+    {
+        switch (stages)
+        {
+        case 0:
+        {
+            if (millis() - timer > GLOBAL_NAV_DELAY)
+            {
+                stages++;
+                goBackwards(1);
+            }
+            break;
+        }
+        case 1:
+        {
+            if (gone_backwards)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    gone_backwards = false;
+                    if (UTurn.lastMove == 'L')
+                    {
+                        rotateForDeg(90);
+                        UTurn.lastMove = 'R';
+                    }
+                    else
+                    {
+                        rotateForDeg(-90);
+                        UTurn.lastMove = 'L';
+                    }
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 2:
+        {
+            if (rotated)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    rotated = false;
+                    goForward(10);
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 3:
+        {
+            if (gone_forward)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    gone_forward = false;
+                    if (UTurn.lastMove == 'R')
+                    {
+                        rotateForDeg(90);
+                    }
+                    else
+                    {
+                        rotateForDeg(-90);
+                    }
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 4:
+        {
+            if (rotated)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    rotated = false;
+                    goForward();
+                    /*
+                    checkDirectionsDeg();
+                    NAVSerial.print("QUADRANTE: ");
+                    NAVSerial.println(quadrant);
+                    NAVSerial.print("VECTOR SLOPE: ");
+                    NAVSerial.println(vector_slope);
+                    */
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 5:
+        {
+            disableUTurn();
+            break;
+        }
+        }
+    }
+
+    if (UTurn.isBlocked)
+    {
+        switch (stages)
+        {
+        case 0:
+        {
+            if (millis() - timer > GLOBAL_NAV_DELAY)
+            {
+                stages++;
+                goBackwards(2);
+            }
+            break;
+        }
+        case 1:
+        {
+            if (gone_backwards)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    gone_backwards = false;
+                    if (UTurn.lastMove == 'R')
+                    {
+                        rotateForDeg(90);
+                    }
+                    else
+                    {
+                        rotateForDeg(-90);
+                    }
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 2:
+        {
+            if (rotated)
+            {
+                if (millis() - timer > GLOBAL_NAV_DELAY)
+                {
+                    stages++;
+                    rotated = false;
+                    goForward();
+                }
+            }
+            else
+            {
+                timer = millis();
+            }
+            break;
+        }
+        case 3:
+        {
+            disableUTurn();
+            break;
+        }
+        }
+    }
+
+    if (SuddenStop.avoid)
+    {
+        if (movement_direction == 'w')
+        {
+            switch (SuddenStop.stages)
             {
                 case 0:
                 {
                     if (millis() - timer > GLOBAL_NAV_DELAY)
                     {
-                        BorderMode.stages++;
-                        gone_backwards = false;
-                        rotateForDeg(10);
+                        SuddenStop.stages++;
+                        goBackwards(2);
                     }
                     break;
                 }
                 case 1:
                 {
-                    if (rotated)
-                    {
-                        if (millis() - timer > GLOBAL_NAV_DELAY)
-                        {
-                            BorderMode.stages++;
-                            rotated = false;
-                            goForward();
-                        }
-                    }
-                    else
-                        timer = millis();
-                    break;
-                }
-                case 2:
-                {
-                    if (BorderMode.obstacle_detected)
-                    {
-                        if (millis() - timer > GLOBAL_NAV_DELAY)
-                        {
-                            BorderMode.stages = 0;
-                            BorderMode.obstacle_detected = false;
-                        }
-                    }
-                    else if (BorderMode.lateral_obstacle_detected)
-                    {
-                        if (millis() - timer > GLOBAL_NAV_DELAY)
-                        {
-                            BorderMode.stages++;
-                            rotateUntil('r', &BorderMode.lateral_obstacle_detected, false);
-                        }
-                    }
-                    else
-                        timer = millis();
-                    break;
-                }
-                case 3:
-                {
-                    if (RotateUntil.done)
-                    {
-                        if (millis() - timer > GLOBAL_NAV_DELAY)
-                        {
-                            BorderMode.stages++;
-                            RotateUntil.done = false;
-                            goForward();
-                        }
-                    }
-                    else
-                        timer = millis();
-                    break;
-                }
-                case 4:
-                {
-                    if (BorderMode.lateral_obstacle_detected)
-                    {
-                        NAVMotors.setSpeed(150, RIGHT);
-                        NAVMotors.setSpeed(255, LEFT);
-                    }
-                    else
-                    {
-                        NAVMotors.setSpeed(150, LEFT);
-                        NAVMotors.setSpeed(255, RIGHT);
-                    }
-                    break;
-                }
-            }
-        }
-
-        if (RotateUntil.active)
-        {
-            if (RotateUntil.dir == 'r')
-                NAVMotors.right();
-            else
-                NAVMotors.left();
-
-            if (*RotateUntil.var_ptr == RotateUntil.condition)
-            {
-                NAVMotors.stop();
-                stop();
-                RotateUntil.done = true;
-                RotateUntil.active = false;
-            }
-        }
-
-        if (sudden_stop)
-        {
-            sudden_stop = false;
-            going_forward = false;
-            resetMovementVars();
-
-            if (autorun)
-            {
-                if (check_second_sudden_stop)
-                {
-                    // se il robot si è fermato di colpo, è andato indietro e ora sta andando avanti;
-                    // se viene di nuovo fermato di colpo (entro 1.5 secondi dal primo blocco), allora cambia direzione (abilitando uturn)
-                    // questo solo se l'uturn non era già in corso; se lo era, riprende da dove era rimasto
-                    NAVSerial.println();
-                    NAVSerial.println("CHECK SECOND SUDDEN STOP");
-                    if (SuddenStop.whileUturn)
-                    {
-                        NAVSerial.println("SUDDENSTOP WHILE UTURN");
-                        if (distance_traveled > 2)
-                        {
-                            NAVSerial.println("DISTANCE TRAVELED OVER 2");
-                            SuddenStop.whileUturn = false;
-                            distance_traveled = distance_traveled_before_uturn_sudden_stop;
-                            UTurn.active = true;
-                            check_second_sudden_stop = false;
-                        }
-                        else if (millis() - SuddenStop.timer <= 3000)
-                        {
-                            NAVSerial.println("DISTANCE TRAVELED LESS THAN 2 AND SUDDENSTOP TIMER LESS THAN 3s");
-                            SuddenStop.whileUturn = false;
-                            check_second_sudden_stop = false;
-                            enableUTurn();
-                        }
-                    }
-                    else if (millis() - SuddenStop.timer <= 3000)
-                    {
-                        check_second_sudden_stop = false;
-                        enableUTurn();
-                    }
-                }
-                else
-                {
-                    if (UTurn.active)
-                    {
-                        NAVCore.println((char *)"(NAV) SUDDENSTOP WHILE UTURN");
-                        SuddenStop.whileUturn = true;
-                        // disabilita uturn temporaneamente
-                        UTurn.active = false;
-                    }
-                    enableSuddenStopAvoid();
-                    SuddenStop.stages = 0;
-                }
-            }
-        }
-
-        if (check_second_sudden_stop)
-        {
-            if (distance_traveled > 4)
-                check_second_sudden_stop = false;
-        }
-
-        if (rotating && ENABLE_ROTATION_SENSING)
-        {
-            uint16_t currentHDG = getHDG();
-
-            if (currentHDG > heading_target - 50 && currentHDG < heading_target + 50)
-            {
-                NAVMotors.stop();
-                stop();
-                NAVSensors.stopMoving();
-                rotating = false;
-                rotated = true;
-                RotationControl.active = true;
-                RotationControl.top_hdg_border = heading_target + 50;
-                RotationControl.bottom_hdg_border = heading_target - 50;
-                timer = millis();
-            }
-            else if (ENABLE_ROTATION_SENSING)
-            {
-                // 𝑦=140+𝑎𝑥
-                // 𝑎 = 5.3
-
-                int32_t current_hdg = convertHDGTo180(currentHDG);
-                int32_t target_hdg = convertHDGTo180(heading_target);
-
-                int32_t diff = 0;
-
-                if (current_hdg > 0 && target_hdg > 0) // entrambi a destra
-                    diff = current_hdg - target_hdg;
-                else if (current_hdg < 0 && target_hdg < 0) // entrambi a sinistra
-                    diff = current_hdg - target_hdg;
-                else if ((current_hdg > 0 && target_hdg < 0) || (current_hdg < 0 && target_hdg > 0)) // sono in metà diverse
-                {
-                    if (current_hdg < 0)
-                        current_hdg *= -1;
-                    if (target_hdg < 0)
-                        target_hdg *= -1;
-                    
-                    if (current_hdg > 9000 && target_hdg > 9000) // se sono sotto
-                        diff = 36000 - current_hdg - target_hdg;
-                    else if (current_hdg < 9000 && target_hdg < 9000) // se sono sopra
-                        diff = current_hdg + target_hdg;
-                }
-
-                if (diff < 0)
-                    diff *= -1;
-
-                uint8_t spd;
-                if (diff < 3558)
-                {
-                    spd = 140 + 3.2 * (diff / 100);
-                    NAVMotors.setSpeed(spd, BOTH);
-                }
-                else
-                    NAVMotors.setSpeed(255, BOTH);
-            }
-        }
-
-        if (UTurn.active)
-        {
-            switch (stages)
-            {
-            case 0:
-            {
-                if (millis() - timer > GLOBAL_NAV_DELAY)
-                {
-                    stages++;
-                    goBackwards(1);
-                }
-                break;
-            }
-            case 1:
-            {
-                if (gone_backwards)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        gone_backwards = false;
-                        if (UTurn.lastMove == 'L')
-                        {
-                            rotateForDeg(90);
-                            UTurn.lastMove = 'R';
-                        }
-                        else
-                        {
-                            rotateForDeg(-90);
-                            UTurn.lastMove = 'L';
-                        }
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 2:
-            {
-                if (rotated)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        rotated = false;
-                        goForward(10);
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 3:
-            {
-                if (gone_forward)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        gone_forward = false;
-                        if (UTurn.lastMove == 'R')
-                        {
-                            rotateForDeg(90);
-                        }
-                        else
-                        {
-                            rotateForDeg(-90);
-                        }
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 4:
-            {
-                if (rotated)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        rotated = false;
-                        goForward();
-                        /*
-                        checkDirectionsDeg();
-                        NAVSerial.print("QUADRANTE: ");
-                        NAVSerial.println(quadrant);
-                        NAVSerial.print("VECTOR SLOPE: ");
-                        NAVSerial.println(vector_slope);
-                        */
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 5:
-            {
-                disableUTurn();
-                break;
-            }
-            }
-        }
-
-        if (UTurn.isBlocked)
-        {
-            switch (stages)
-            {
-            case 0:
-            {
-                if (millis() - timer > GLOBAL_NAV_DELAY)
-                {
-                    stages++;
-                    goBackwards(2);
-                }
-                break;
-            }
-            case 1:
-            {
-                if (gone_backwards)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        gone_backwards = false;
-                        if (UTurn.lastMove == 'R')
-                        {
-                            rotateForDeg(90);
-                        }
-                        else
-                        {
-                            rotateForDeg(-90);
-                        }
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 2:
-            {
-                if (rotated)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        stages++;
-                        rotated = false;
-                        goForward();
-                    }
-                }
-                else
-                {
-                    timer = millis();
-                }
-                break;
-            }
-            case 3:
-            {
-                disableUTurn();
-                break;
-            }
-            }
-        }
-
-        if (SuddenStop.avoid)
-        {
-            if (movement_direction == 'w')
-            {
-                switch (SuddenStop.stages)
-                {
-                    case 0:
+                    if (gone_backwards)
                     {
                         if (millis() - timer > GLOBAL_NAV_DELAY)
                         {
                             SuddenStop.stages++;
-                            goBackwards(2);
+                            gone_backwards = false;
+                            goForward();
                         }
-                        break;
                     }
-                    case 1:
-                    {
-                        if (gone_backwards)
-                        {
-                            if (millis() - timer > GLOBAL_NAV_DELAY)
-                            {
-                                SuddenStop.stages++;
-                                gone_backwards = false;
-                                goForward();
-                            }
-                        }
-                        break;
-                    }
-                    case 2:
-                    {
-                        disableSuddenStopAvoid();
-                        check_second_sudden_stop = true;
-                        SuddenStop.timer = millis();
-                        SuddenStop.stages = 0;
-                        break;
-                    }
+                    break;
+                }
+                case 2:
+                {
+                    disableSuddenStopAvoid();
+                    check_second_sudden_stop = true;
+                    SuddenStop.timer = millis();
+                    SuddenStop.stages = 0;
+                    break;
                 }
             }
         }
-
-        if (robot_moving_x_y)
-        {
-            uint16_t hdg_360 = getHDG();
-            float dst = NAVSensors.getLastTraveledDistance();
-
-            /**
-             * Heading in modailtà 180°
-             * Il vettore X è positivo verso 0°
-             * Il vettore Y è positivo verso 90°
-             * |         0°         |
-             * |     /       \      |
-             * |  270°        90°   |
-             * |     \       /      |
-             * |        180°        |
-             */
-
-            if (vectors.last_dst != dst)
-            {
-                vectors.last_dst = dst;
-
-                // i vettori si alternano sin e cos perché il riferimento dell'heading cambia in base al quadrante
-
-                if (hdg_360 > 0 && hdg_360 < 9000) // heading positivo per X e Y -- alto destra -- riferimento 0°
-                {
-                    if (going_backwards)
-                        hdg_360 = invertHDG(hdg_360);
-                    float rad = radians(hdg_360 / 100);
-                    vectors.xvector += dst * sin(rad); // positivo per X
-                    vectors.yvector += dst * cos(rad); // positivo per Y
-                }
-                else if (hdg_360 > 9000 && hdg_360 < 18000) // heading positivo per X, negativo per Y -- basso destra -- riferimento 90°
-                {
-                    if (going_backwards)
-                        hdg_360 = invertHDG(hdg_360);
-                    hdg_360 = convertRelativeHDG(hdg_360, 90);
-                    float rad = radians(hdg_360 / 100);
-                    vectors.xvector += dst * cos(rad); // positivo per X
-                    vectors.yvector -= dst * sin(rad); // negativo per Y
-                }
-                else if (hdg_360 > 18000 && hdg_360 < 27000) // heading negativo per X e Y -- basso sinistra -- riferimento 180°
-                {
-                    if (going_backwards)
-                        hdg_360 = invertHDG(hdg_360);
-                    hdg_360 = convertRelativeHDG(hdg_360, 180);
-                    float rad = radians(hdg_360 / 100);
-                    vectors.xvector -= dst * sin(rad); // negativo per X
-                    vectors.yvector -= dst * cos(rad); // negativo per Y
-                }
-                else // heading positivo per Y, negativo per X -- alto sinistra -- riferimento 270°
-                {
-                    if (going_backwards)
-                        hdg_360 = invertHDG(hdg_360);
-                    hdg_360 = convertRelativeHDG(hdg_360, 270);
-                    float rad = radians(hdg_360 / 100);
-                    vectors.xvector -= dst * cos(rad); // negativo per X
-                    vectors.yvector += dst * sin(rad); // positivo per Y
-                }
-            }
-        }
-
-        t3 = micros() - start_time;
     }
+
+    if (robot_moving_x_y)
+    {
+        uint32_t hdg_360 = getHDG();
+        float dst = NAVSensors.getLastTraveledDistance();
+
+        /**
+         * Heading in modailtà 180°
+         * Il vettore X è positivo verso 90°
+         * Il vettore Y è positivo verso 0°
+         * |         0°         |
+         * |     /       \      |
+         * |  270°        90°   |
+         * |     \       /      |
+         * |        180°        |
+         */
+
+        if (vectors.last_dst != dst)
+        {
+            vectors.last_dst = dst;
+
+            // i vettori si alternano sin e cos perché il riferimento dell'heading cambia in base al quadrante
+
+            if (hdg_360 > 0 && hdg_360 < 9000) // heading positivo per X e Y -- alto destra -- riferimento 0°
+            {
+                if (going_backwards)
+                    hdg_360 = invertHDG(hdg_360);
+                float rad = radians(hdg_360 / 100);
+                vectors.xvector += dst * sin(rad); // positivo per X
+                vectors.yvector += dst * cos(rad); // positivo per Y
+            }
+            else if (hdg_360 > 9000 && hdg_360 < 18000) // heading positivo per X, negativo per Y -- basso destra -- riferimento 90°
+            {
+                if (going_backwards)
+                    hdg_360 = invertHDG(hdg_360);
+                hdg_360 = convertRelativeHDG(hdg_360, 90);
+                float rad = radians(hdg_360 / 100);
+                vectors.xvector += dst * cos(rad); // positivo per X
+                vectors.yvector -= dst * sin(rad); // negativo per Y
+            }
+            else if (hdg_360 > 18000 && hdg_360 < 27000) // heading negativo per X e Y -- basso sinistra -- riferimento 180°
+            {
+                if (going_backwards)
+                    hdg_360 = invertHDG(hdg_360);
+                hdg_360 = convertRelativeHDG(hdg_360, 180);
+                float rad = radians(hdg_360 / 100);
+                vectors.xvector -= dst * sin(rad); // negativo per X
+                vectors.yvector -= dst * cos(rad); // negativo per Y
+            }
+            else // heading positivo per Y, negativo per X -- alto sinistra -- riferimento 270°
+            {
+                if (going_backwards)
+                    hdg_360 = invertHDG(hdg_360);
+                hdg_360 = convertRelativeHDG(hdg_360, 270);
+                float rad = radians(hdg_360 / 100);
+                vectors.xvector -= dst * cos(rad); // negativo per X
+                vectors.yvector += dst * sin(rad); // positivo per Y
+            }
+        }
+    }
+
+    t3 = micros() - start_time;
 }
 
 uint32_t NAV::getTime()
@@ -829,12 +824,13 @@ void NAV::externalStop()
     BorderMode.check_straight_path = false;
     BorderMode.completed = false;
     BorderMode.lateral_obstacle_detected = false;
-    NAVMotors.stop();
     stop();
+    NAVMotors.stop();
     resetMovementVars();
     UTurn.active = false;
     autorun = false;
     NAVSensors.setAutoRun(false);
+    NAVSensors.resetMovementVars();
     robot_moving_x_y = false;
 }
 

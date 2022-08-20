@@ -2,6 +2,8 @@
 
 bool running_led_state = false;
 bool running = false;
+bool main_motor_starting = false;
+uint8_t main_motor_warning = 0;
 
 uint32_t status_time1 = millis();
 
@@ -26,6 +28,27 @@ void Status::update()
         }
 
         status_time1 = millis();
+    }
+
+    if (main_motor_starting)
+    {
+        if (diff1 > 50)
+        {
+            if (main_motor_warning < 75)
+            {
+                running_led_state = !running_led_state;
+                digitalWrite(RUNNING_LED, running_led_state);
+                status_time1 = millis();
+                main_motor_warning++;
+            }
+            else
+            {
+                main_motor_warning = 0;
+                main_motor_starting = false;
+                running_led_state = 1;
+                digitalWrite(RUNNING_LED, running_led_state);
+            }
+        }
     }
 }
 
@@ -61,4 +84,9 @@ void Status::setWarning(bool condition)
         running = false;
         setError(false);
     }
+}
+
+void Status::mainMotorStarting()
+{
+    main_motor_starting = true;
 }

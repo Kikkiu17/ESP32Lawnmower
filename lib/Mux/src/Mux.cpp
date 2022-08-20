@@ -6,13 +6,39 @@
 #include <SETTINGS.h>
 #include <NewPing.h>
 #include <Sensors.h>
+#include <Core.h>
+
+#define READ_ANALOG 1
+#define READ_DIGITAL 2
+#define SENS_PACKET 3
+#define SENS_PACKET_ONESHOT 4
+#define STOP_SENS_PACKET 5
 
 // vedere SETTINGS.h in region "Pin diretti ESP" per informazioni sul pin 17 - ENABLE
 
 BluetoothSerial MUXBT;
 Sensors MUXSensor;
-TaskHandle_t PulseIn;
+Core muxcore;
+TaskHandle_t PulseInHandle;
+TaskHandle_t ReadDigitalHandle;
+TaskHandle_t ReadAnalogHandle;
+TaskHandle_t TaskManagerHandle;
+QueueHandle_t TaskManagerQueue;
+QueueHandle_t ReadAnalogQueue;
+QueueHandle_t ReadDigitalQueue;
+QueueHandle_t PulseInQueue;
 
+static StaticQueue_t TaskManagerStaticQueue;
+static StaticQueue_t ReadDigitalStaticQueue;
+static StaticQueue_t ReadAnalogStaticQueue;
+static StaticQueue_t PulseInStaticQueue;
+
+uint8_t TaskManagerArray[400];
+uint8_t ReadDigitalArray[400];
+uint8_t ReadAnalogArray[400];
+uint8_t PulseInArray[400];
+
+bool pulsein_returned = false;
 bool execute_once = false;
 bool signal_low = false;
 bool rising_edge = false;
@@ -20,6 +46,18 @@ bool got_reading = false;
 bool stop = false;
 uint64_t start_US_time = 0;
 uint64_t stop_US_time = 0;
+
+bool sens_packet_stopped = false;
+
+uint8_t sensor = 0;
+bool get_sensors_packets = false;
+
+// array:
+// US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
+uint64_t mux_data[9] = {};
+uint64_t* mux_data_ptr = mux_data;
+uint8_t mux_data_idx = 0;
+uint8_t mux_ch = 0;
 
 uint8_t channels[16][4] =
 {
@@ -47,7 +85,7 @@ struct
     uint8_t read = 0;
 } USData;
 
-void Mux::selectChannel(byte ch, uint8_t mode)
+void IRAM_ATTR Mux::selectChannel(byte ch, uint8_t mode)
 {
     ledcDetachPin(MUX_COM);
     if (mode == READ)
@@ -59,43 +97,51 @@ void Mux::selectChannel(byte ch, uint8_t mode)
     digitalWrite(MUX1, channels[ch][2]);
     digitalWrite(MUX2, channels[ch][1]);
     digitalWrite(MUX3, channels[ch][0]);
-    // digitalWrite(MUX_ENABLE, 0);
 }
 
-void PulseInFunction(void *param)
+void IRAM_ATTR PulseInFunction(void *param)
 {
     uint8_t watchdog_counter = 0;
-    Mux taskmux;
+    uint32_t buffer = 0;
+    uint32_t item_to_queue = 0;
     for (;;)
     {
-        // eseguito in core0 con priorità 24 (max)
         if (!execute_once)
         {
-            execute_once = true;
-            ledcDetachPin(MUX_COM);
-            pinMode(MUX_COM, OUTPUT); // write
-            digitalWrite(MUX0, channels[USData.write][3]);
-            digitalWrite(MUX1, channels[USData.write][2]);
-            digitalWrite(MUX2, channels[USData.write][1]);
-            digitalWrite(MUX3, channels[USData.write][0]);
-            digitalWrite(MUX_COM, 1);
-            delayMicroseconds(9);
-            digitalWrite(MUX_COM, 0);
+            if (xQueueReceive(PulseInQueue, &buffer, 1) == pdTRUE)
+            {
+                execute_once = true;
+                ledcDetachPin(MUX_COM);
+                pinMode(MUX_COM, OUTPUT); // write
+                digitalWrite(MUX0, channels[USData.write][3]);
+                digitalWrite(MUX1, channels[USData.write][2]);
+                digitalWrite(MUX2, channels[USData.write][1]);
+                digitalWrite(MUX3, channels[USData.write][0]);
+                digitalWrite(MUX_COM, 1);
+                delayMicroseconds(9);
+                digitalWrite(MUX_COM, 0);
+            }
         }
         else if (!got_reading)
         {
             if (!signal_low)
             {
-                taskmux.selectChannel(USData.read, READ);
+                pinMode(MUX_COM, INPUT); // read
+                digitalWrite(MUX0, channels[USData.read][3]);
+                digitalWrite(MUX1, channels[USData.read][2]);
+                digitalWrite(MUX2, channels[USData.read][1]);
+                digitalWrite(MUX3, channels[USData.read][0]);
                 if (analogRead(MUX_COM) < 2046)
-                {
                     signal_low = true;
-                }
             }
             else if (!rising_edge)
             {
                 watchdog_counter++;
-                taskmux.selectChannel(USData.read, READ);
+                pinMode(MUX_COM, INPUT); // read
+                digitalWrite(MUX0, channels[USData.read][3]);
+                digitalWrite(MUX1, channels[USData.read][2]);
+                digitalWrite(MUX2, channels[USData.read][1]);
+                digitalWrite(MUX3, channels[USData.read][0]);
                 if (analogRead(MUX_COM) > 2046)
                 {
                     rising_edge = true;
@@ -104,7 +150,11 @@ void PulseInFunction(void *param)
             }
             else if (!got_reading)
             {
-                taskmux.selectChannel(USData.read, READ);
+                pinMode(MUX_COM, INPUT); // read
+                digitalWrite(MUX0, channels[USData.read][3]);
+                digitalWrite(MUX1, channels[USData.read][2]);
+                digitalWrite(MUX2, channels[USData.read][1]);
+                digitalWrite(MUX3, channels[USData.read][0]);
                 if (analogRead(MUX_COM) < 2046)
                 {
                     stop_US_time = esp_timer_get_time();
@@ -113,52 +163,212 @@ void PulseInFunction(void *param)
                     signal_low = false;
                     rising_edge = false;
                     got_reading = false;
-                    MUXSensor.returnUSDistance(diff * 0.017);
-                    vTaskDelete(NULL);
+                    watchdog_counter = 0;
+                    mux_data[mux_data_idx] = diff;
+                    mux_data_idx++;
+                    vTaskPrioritySet(PulseInHandle, 5);
+                    vTaskDelay(1);
+                    item_to_queue = SENS_PACKET;
+                    xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
                 }
             }
         }
 
-        if (watchdog_counter > 100)
+        if (watchdog_counter > 200)
         {
-            MUXBT.println("WATCHDOG COUNTER TRIGGERED - CURRENT CHANNELS: ");
-            MUXBT.print("WRITE: ");
-            MUXBT.println(USData.write);
-            MUXBT.print("READ: ");
-            MUXBT.println(USData.read);
-            MUXBT.println("RESETTING...");
-            ESP.restart();
-            vTaskDelete(NULL);
+            Serial.println("(Mux.cpp) WATCHDOG COUNTER TRIGGERED - CURRENT CHANNELS: ");
+            Serial.println(USData.write);
+            Serial.println(USData.read);
+            Serial.println("RESETTING VALUES");
+            execute_once = false;
+            signal_low = false;
+            rising_edge = false;
+            got_reading = false;
+            watchdog_counter = 0;
+            mux_data[mux_data_idx] = 0;
+            mux_data_idx++;
+            vTaskPrioritySet(PulseInHandle, 5);
+            vTaskDelay(1);
+            item_to_queue = SENS_PACKET;
+            xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
         }
     }
 }
 
-void Mux::begin()
+void TaskManagerFunction(void *param)
 {
-    pinMode(MUX0, OUTPUT);
-    pinMode(MUX1, OUTPUT);
-    pinMode(MUX2, OUTPUT);
-    pinMode(MUX3, OUTPUT);
-    // pinMode(MUX_ENABLE, OUTPUT);
+    uint32_t buffer = 0;
+    uint32_t item_to_queue = 0;
+    for (;;)
+    {
+        if (xQueueReceive(TaskManagerQueue, &buffer, 1) == pdTRUE)
+        {
+            if (buffer == READ_ANALOG)
+            {
+                item_to_queue = READ_ANALOG;
+                xQueueSend(ReadAnalogQueue, (void *)&item_to_queue, 0);
+            }
+            else if (buffer == READ_DIGITAL)
+            {
+                item_to_queue = READ_DIGITAL;
+                xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
+            }
+            else if (buffer == SENS_PACKET || buffer == SENS_PACKET_ONESHOT)
+            {
+                if (!sens_packet_stopped)
+                {
+                    switch (sensor)
+                    {
+                        case 0:
+                        {
+                            sensor++;
+                            USData.write = US_TRIG_F;
+                            USData.read = US_ECHO_F;
+                            vTaskPrioritySet(PulseInHandle, 24);
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 1:
+                        {
+                            sensor++;
+                            USData.write = US_TRIG_L;
+                            USData.read = US_ECHO_L;
+                            vTaskPrioritySet(PulseInHandle, 24);
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 2:
+                        {
+                            sensor++;
+                            USData.write = US_TRIG_R;
+                            USData.read = US_ECHO_R;
+                            vTaskPrioritySet(PulseInHandle, 24);
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 3:
+                        {
+                            sensor++;
+                            mux_ch = IR_F;
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 4:
+                        {
+                            sensor++;
+                            mux_ch = IR_L;
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 5:
+                        {
+                            sensor++;
+                            mux_ch = BAT;
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(ReadAnalogQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                        case 6:
+                        {
+                            sensor = 0;
+                            mux_data_idx = 0;
+                            mux_data[8]++;
+                            vTaskDelay(pdMS_TO_TICKS(1));
+                            item_to_queue = SENS_PACKET;
+                            xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    sensor = 0;
+                    mux_data_idx = 0;
+                }
+            }
+        }
+    }
 }
 
-void Mux::loop()
+void ReadDigitalFunction(void *param)
 {
+    uint32_t buffer = 0;
+    uint32_t item_to_queue = 0;
+    for (;;)
+    {
+        if (xQueueReceive(ReadDigitalQueue, &buffer, 1) == pdTRUE)
+        {
+            pinMode(MUX_COM, INPUT);
+            digitalWrite(MUX0, channels[mux_ch][3]);
+            digitalWrite(MUX1, channels[mux_ch][2]);
+            digitalWrite(MUX2, channels[mux_ch][1]);
+            digitalWrite(MUX3, channels[mux_ch][0]);
+            delayMicroseconds(10);
 
+            if (buffer == SENS_PACKET)
+            {
+                mux_data[mux_data_idx] = digitalRead(MUX_COM);
+                mux_data_idx++;
+                item_to_queue = SENS_PACKET;
+                xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+            }
+            else if (buffer == READ_DIGITAL)
+            {
+                mux_data[8]++;
+                mux_data[6] = digitalRead(MUX_COM);
+            }
+        }
+    }
+}
+
+void ReadAnalogFunction(void *param)
+{
+    uint32_t buffer = 0;
+    uint32_t item_to_queue = 0;
+    for (;;)
+    {
+        if (xQueueReceive(ReadAnalogQueue, &buffer, 1) == pdTRUE)
+        {
+            pinMode(MUX_COM, INPUT);
+            digitalWrite(MUX0, channels[mux_ch][3]);
+            digitalWrite(MUX1, channels[mux_ch][2]);
+            digitalWrite(MUX2, channels[mux_ch][1]);
+            digitalWrite(MUX3, channels[mux_ch][0]);
+            delayMicroseconds(10);
+
+            if (buffer == SENS_PACKET)
+            {
+                mux_data[mux_data_idx] = analogRead(MUX_COM);
+                mux_data_idx++;
+                item_to_queue = SENS_PACKET;
+                xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+            }
+            else if (buffer == READ_ANALOG)
+            {
+                mux_data[8]++;
+                mux_data[7] = analogRead(MUX_COM);
+            }
+        }
+    }
+}
+
+uint64_t *Mux::getPacketPointer()
+{
+    return mux_data_ptr;
 }
 
 uint16_t Mux::readAnalog(byte ch)
 {
-    // digitalWrite(MUX_ENABLE, 1);
-    ledcDetachPin(MUX_COM);
-    pinMode(MUX_COM, INPUT);
-    digitalWrite(MUX0, channels[ch][3]);
-    digitalWrite(MUX1, channels[ch][2]);
-    digitalWrite(MUX2, channels[ch][1]);
-    digitalWrite(MUX3, channels[ch][0]);
-    delayMicroseconds(5);
-    // digitalWrite(MUX_ENABLE, 0);
-    return analogRead(MUX_COM);
+    uint32_t item_to_queue = 0;
+    mux_ch = BAT;
+    item_to_queue = READ_ANALOG;
+    xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+    return 0;
 }
 
 uint8_t Mux::readDigital(byte ch)
@@ -214,7 +424,7 @@ uint16_t Mux::fastRead()
 
 float Mux::requestUSDistance(uint8_t sens)
 {
-    // non c'è bisogno del ledcDetachPin, perché vengono usate solo funzioni di questa libreria,
+    // non c'è bisogno di ledcDetachPin, perché vengono usate solo funzioni di questa libreria,
     // che incorporano tutte ledcDetachPin
 
     if (sens == FRONT)
@@ -233,8 +443,46 @@ float Mux::requestUSDistance(uint8_t sens)
         USData.write = US_TRIG_L;
     }
 
-    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 2000, NULL, 24, &PulseIn, 0);
-
     return 15;
 }
 
+void Mux::sensPacketUpdate(bool polling_mode)
+{
+    if (polling_mode)
+    {
+        sens_packet_stopped = false;
+        uint32_t item_to_queue = 0;
+        item_to_queue = SENS_PACKET;
+        xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+    }
+    else if (!sens_packet_stopped)
+        sens_packet_stopped = true;
+}
+
+void Mux::begin()
+{
+    pinMode(MUX0, OUTPUT);
+    pinMode(MUX1, OUTPUT);
+    pinMode(MUX2, OUTPUT);
+    pinMode(MUX3, OUTPUT);
+
+    TaskManagerQueue = xQueueCreateStatic(100, sizeof(uint32_t), TaskManagerArray, &TaskManagerStaticQueue);
+    ReadDigitalQueue = xQueueCreateStatic(100, sizeof(uint32_t), ReadDigitalArray, &ReadDigitalStaticQueue);
+    ReadAnalogQueue = xQueueCreateStatic(100, sizeof(uint32_t), ReadAnalogArray, &ReadAnalogStaticQueue);
+    PulseInQueue = xQueueCreateStatic(100, sizeof(uint32_t), PulseInArray, &PulseInStaticQueue);
+    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 2048, NULL, 10, &PulseInHandle, 0);
+    xTaskCreatePinnedToCore(ReadDigitalFunction, "ReadDigital", 2048, NULL, 2, &ReadDigitalHandle, 0);
+    xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 2048, NULL, 2, &ReadAnalogHandle, 0);
+    xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 2048, NULL, 10, &TaskManagerHandle, 0);
+
+    uint32_t item_to_queue = SENS_PACKET;
+    xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
+
+    get_sensors_packets = true;
+    Serial.println(uxTaskGetStackHighWaterMark(TaskManagerHandle));
+    Serial.println(uxTaskGetStackHighWaterMark(PulseInHandle));
+}
+
+void Mux::loop()
+{
+}
