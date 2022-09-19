@@ -19,6 +19,9 @@ uint32_t ref_time = millis();
 byte BTData;
 bool lowbat = false;
 uint64_t *ptr;
+bool rst_confirmation = false;
+bool erase_map_confirmation = false;
+bool core_bordermode = false;
 
 void Core::begin()
 {
@@ -26,16 +29,17 @@ void Core::begin()
     motors.begin();
     sensors.begin();
     status.setReady(true);
+    navigation.begin();
     mux.begin();
 
     status.setReady(true);
     motors.setSpeed(0, MAIN);
-    ptr = mux.getPacketPointer();
+    //ptr = mux.getPacketPointer();
 }
 
 void Core::loop()
 {
-    if (lowbat)
+    if (lowbat && ENABLE_BAT_VOLTAGE_SENSING)
         return;
     // controllo input utente
     if (coreSerialBT.available())
@@ -43,35 +47,37 @@ void Core::loop()
         BTData = coreSerialBT.read();
         if (BTData == 'w')
         {
-            println("BT FORWARD");
+            println(F("BT FORWARD"));
             navigation.goForward();
         }
         else if (BTData == 'a')
         {
-            println("BT LEFT");
+            println(F("BT LEFT"));
             navigation.rotateForDeg(-90);
         }
         else if (BTData == 's')
         {
-            println("BT BACK");
+            println(F("BT BACK"));
             navigation.goBackwards();
         }
         else if (BTData == 'd')
         {
-            println("BT RIGHT");
+            println(F("BT RIGHT"));
             navigation.rotateForDeg(90);
-        }
-        else if (BTData == 'y')
-        {
-            mux.sensPacketUpdate(false);
         }
         else if (BTData == 'i')
         {
-            mux.sensPacketUpdate(true);
+            //navigation.initSD();
+        }
+        else if (BTData == 'r')
+        {
+            core_bordermode = !core_bordermode;
+            navigation.mapBorderMode(core_bordermode);
+            println("Bordermode", core_bordermode);
         }
         else if (BTData == 'o')
         {
-            println("GET HDG", navigation.getHDG());
+            navigation.test_func();
         }
         else if (BTData == 'c')
         {
@@ -79,25 +85,76 @@ void Core::loop()
         }
         else if (BTData == 'b')
         {
-            coreSerialBT.print("Batteria: ");
-            coreSerialBT.print(sensors.getBatADC());
-            coreSerialBT.println(" su 2770");
+            uint64_t *packetptr = mux.getPacketPointer();
+            mux.readAnalog(BAT);
+            delay(50);
+            coreSerialBT.print(F("Batteria: "));
+            coreSerialBT.print(*(packetptr+5));
+            coreSerialBT.println(F(" su 2770"));
         }
-        else if (BTData == 'm')
+        else if (BTData == 'm'|| BTData == 'M')
         {
             motors.toggleMainMotor();
         }
         else if (BTData == 'p')
         {
-            ledcWrite(CHANNEL_MAIN, 0);
+            println(F("ERASE MAP? Y/N"));
+            erase_map_confirmation = true;
         }
         else if (BTData == 'u')
         {
             navigation.autoRun();
         }
+        else if (BTData == 't')
+        {
+            println(F("RESET? Y/N"));
+            rst_confirmation = true;
+        }
+        else if (BTData == 'y' || BTData == 'Y')
+        {
+            if (rst_confirmation)
+            {
+                println(F("RESETTING"));
+                ESP.restart();
+            }
+            if (erase_map_confirmation)
+            {
+                navigation.eraseSD(F("/MAP.txt"));
+                println(F("MAP ERASED"));
+                erase_map_confirmation = false;
+            }
+        }
+        else if (BTData == 'n' || BTData == 'N')
+        {
+            if (rst_confirmation)
+            {
+                println(F("RESET CANCELLED"));
+                rst_confirmation = false;
+            }
+            if (erase_map_confirmation)
+            {
+                println(F("ERASE MAP CANCELLED"));
+                erase_map_confirmation = false;
+            }
+        }
+        else if (BTData == 'h' || BTData == 'H')
+        {
+            println("LISTA COMANDI");
+            println("w - a - s - d: movimento robot");
+            println("b: mostra stato batteria");
+            println("c: calibrazione accelerometro/giroscopio");
+            println("i - o - p: funzioni temporanee");
+            println("m(M): accende e spegne motore principale");
+            println("p: reset mappa");
+            println("r: core_bordermode on/off");
+            println("t: reset ESP");
+            println("u: autorun");
+            println("y(Y) / n(N): yes/no nel caso di prompt");
+            println("Alla pressione di altri tasti il robot si ferma");
+        }
         else
         {
-            println("BT STOP");
+            println(F("BT STOP"));
             navigation.externalStop();
         }
     }
@@ -123,13 +180,14 @@ void Core::loop()
         {
             ref_time = millis();
             coreSerialBT.println();
-            println("(Core.cpp) TIME IN MICROSECONDS (us)");
-            println("TIME TO EXECUTE LOOP OF MOT", motors.getTime());
-            println("TIME TO EXECUTE LOOP OF SENS", sensors.getTime());
-            println("TIME TO EXECUTE LOOP OF NAV", navigation.getTime());
-            println("STATUS OF HEAP FRAGMENTATION");
-            println("MAX HEAP", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-            println("LARGEST BLOCK AVAILABLE", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            println(F("(Core.cpp) TIME IN MICROSECONDS (us)"));
+            println(F("TIME TO EXECUTE LOOP OF MOT"), motors.getTime());
+            println(F("TIME TO EXECUTE LOOP OF SENS"), sensors.getTime());
+            println(F("TIME TO EXECUTE LOOP OF NAV"), navigation.getTime());
+            println(F("STATUS OF HEAP FRAGMENTATION"));
+            println(F("MAX HEAP"), heap_caps_get_free_size(MALLOC_CAP_8BIT));
+            println(F("LARGEST BLOCK AVAILABLE"), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            println(F("HEAP MAX SIZE"), ESP.getHeapSize());
         }
     }
 }
@@ -149,20 +207,19 @@ void Core::printTimestamp()
 
 void Core::print(const __FlashStringHelper* type, float data)
 {
-    printTimestamp();
     if (data != -25565)
     {
         if (USING_USB_SERIAL)
         {
             Serial.print(type);
-            Serial.print(": ");
+            Serial.print(F(": "));
             Serial.print(data);
-            Serial.print(";");
+            Serial.print(F(";"));
         }
         coreSerialBT.print(type);
-        coreSerialBT.print(": ");
+        coreSerialBT.print(F(": "));
         coreSerialBT.print(data);
-        coreSerialBT.print(";");
+        coreSerialBT.print(F(";"));
     }
     else
     {
@@ -200,20 +257,19 @@ void Core::println(const __FlashStringHelper* type, float data)
 
 void Core::print(const char *type, float data)
 {
-    printTimestamp();
     if (data != -25565)
     {
         if (USING_USB_SERIAL)
         {
             Serial.print(type);
-            Serial.print(": ");
+            Serial.print(F(": "));
             Serial.print(data);
-            Serial.print(";");
+            Serial.print(F(";"));
         }
         coreSerialBT.print(type);
-        coreSerialBT.print(": ");
+        coreSerialBT.print(F(": "));
         coreSerialBT.print(data);
-        coreSerialBT.print(";");
+        coreSerialBT.print(F(";"));
     }
     else
     {
@@ -231,14 +287,39 @@ void Core::println(const char *type, float data)
         if (USING_USB_SERIAL)
         {
             Serial.print(type);
-            Serial.print(": ");
+            Serial.print(F(": "));
             Serial.print(data);
-            Serial.println(";");
+            Serial.println(F(";"));
         }
         coreSerialBT.print(type);
-        coreSerialBT.print(": ");
+        coreSerialBT.print(F(": "));
         coreSerialBT.print(data);
-        coreSerialBT.println(";");
+        coreSerialBT.println(F(";"));
+    }
+    else
+    {
+        if (USING_USB_SERIAL)
+            Serial.println(type);
+        coreSerialBT.println(type);
+    }
+}
+
+void Core::println(const String type, float data)
+{
+    printTimestamp();
+    if (data != -25565)
+    {
+        if (USING_USB_SERIAL)
+        {
+            Serial.print(type);
+            Serial.print(F(": "));
+            Serial.print(data);
+            Serial.println(F(";"));
+        }
+        coreSerialBT.print(type);
+        coreSerialBT.print(F(": "));
+        coreSerialBT.print(data);
+        coreSerialBT.println(F(";"));
     }
     else
     {
@@ -250,21 +331,22 @@ void Core::println(const char *type, float data)
 
 void Core::printStartDataPacket()
 {
-    Serial.print("DATA_PACKET_START:");
-    coreSerialBT.print("DATA_PACKET_START:");
+    Serial.print(F("DATA_PACKET_START:"));
+    coreSerialBT.print(F("DATA_PACKET_START:"));
 }
 
 void Core::printStopDataPacket()
 {
-    Serial.print("DATA_PACKET_STOP;");
-    coreSerialBT.print("DATA_PACKET_STOP;");
+    Serial.print(F("DATA_PACKET_STOP;"));
+    coreSerialBT.print(F("DATA_PACKET_STOP;"));
 }
 
 void Core::lowBat()
 {
-    println("BATTERIA SCARICA");
+    println(F("BATTERIA SCARICA"));
     lowbat = true;
     motors.toggleMainMotor(0, STOP);
-    motors.stop();
+    navigation.externalStop();
     status.setError(true);
+    mux.sensPacketUpdate(false);
 }

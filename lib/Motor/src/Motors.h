@@ -31,7 +31,7 @@ class Motors
          * 
          * @param reverse Determina se il robot sta andando indietro (true) o no (false, valore default)
          */
-        void maintainHeading(bool reverse = false);
+        void maintainHeading();
 
         /**
          * @brief Imposta la velocità del motore selezionato
@@ -51,7 +51,7 @@ class Motors
          * @return true se il motore è acceso
          * @return false se il motore è spento
          */
-        bool toggleMainMotor(uint8_t spd = 170, uint8_t motor_status = TOGGLE);
+        bool toggleMainMotor(uint8_t spd = 50, uint8_t motor_status = TOGGLE);
 
         uint32_t getTime();
 };

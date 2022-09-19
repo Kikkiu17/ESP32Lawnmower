@@ -33,10 +33,10 @@ static StaticQueue_t ReadDigitalStaticQueue;
 static StaticQueue_t ReadAnalogStaticQueue;
 static StaticQueue_t PulseInStaticQueue;
 
-uint8_t TaskManagerArray[400];
-uint8_t ReadDigitalArray[400];
-uint8_t ReadAnalogArray[400];
-uint8_t PulseInArray[400];
+uint8_t TaskManagerArray[100];
+uint8_t ReadDigitalArray[100];
+uint8_t ReadAnalogArray[100];
+uint8_t PulseInArray[100];
 
 bool pulsein_returned = false;
 bool execute_once = false;
@@ -50,7 +50,6 @@ uint64_t stop_US_time = 0;
 bool sens_packet_stopped = false;
 
 uint8_t sensor = 0;
-bool get_sensors_packets = false;
 
 // array:
 // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
@@ -155,9 +154,9 @@ void IRAM_ATTR PulseInFunction(void *param)
                 digitalWrite(MUX1, channels[USData.read][2]);
                 digitalWrite(MUX2, channels[USData.read][1]);
                 digitalWrite(MUX3, channels[USData.read][0]);
-                if (analogRead(MUX_COM) < 2046)
+                stop_US_time = esp_timer_get_time();
+                if (stop_US_time - start_US_time > US_SENS_DST_TRIG+50 || analogRead(MUX_COM) < 2046)
                 {
-                    stop_US_time = esp_timer_get_time();
                     uint64_t diff = stop_US_time - start_US_time;
                     execute_once = false;
                     signal_low = false;
@@ -278,7 +277,7 @@ void TaskManagerFunction(void *param)
                             sensor = 0;
                             mux_data_idx = 0;
                             mux_data[8]++;
-                            vTaskDelay(pdMS_TO_TICKS(1));
+                            vTaskDelay(pdMS_TO_TICKS(6));
                             item_to_queue = SENS_PACKET;
                             xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
                             break;
@@ -365,7 +364,7 @@ uint64_t *Mux::getPacketPointer()
 uint16_t Mux::readAnalog(byte ch)
 {
     uint32_t item_to_queue = 0;
-    mux_ch = BAT;
+    mux_ch = ch;
     item_to_queue = READ_ANALOG;
     xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
     return 0;
@@ -466,23 +465,30 @@ void Mux::begin()
     pinMode(MUX2, OUTPUT);
     pinMode(MUX3, OUTPUT);
 
-    TaskManagerQueue = xQueueCreateStatic(100, sizeof(uint32_t), TaskManagerArray, &TaskManagerStaticQueue);
-    ReadDigitalQueue = xQueueCreateStatic(100, sizeof(uint32_t), ReadDigitalArray, &ReadDigitalStaticQueue);
-    ReadAnalogQueue = xQueueCreateStatic(100, sizeof(uint32_t), ReadAnalogArray, &ReadAnalogStaticQueue);
-    PulseInQueue = xQueueCreateStatic(100, sizeof(uint32_t), PulseInArray, &PulseInStaticQueue);
-    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 2048, NULL, 10, &PulseInHandle, 0);
-    xTaskCreatePinnedToCore(ReadDigitalFunction, "ReadDigital", 2048, NULL, 2, &ReadDigitalHandle, 0);
-    xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 2048, NULL, 2, &ReadAnalogHandle, 0);
-    xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 2048, NULL, 10, &TaskManagerHandle, 0);
+    /*TaskManagerQueue = xQueueCreate(20, sizeof(uint32_t));
+    ReadDigitalQueue = xQueueCreate(20, sizeof(uint32_t));
+    ReadAnalogQueue = xQueueCreate(20, sizeof(uint32_t));
+    PulseInQueue = xQueueCreate(20, sizeof(uint32_t));*/
+    TaskManagerQueue = xQueueCreateStatic(20, sizeof(uint32_t), TaskManagerArray, &TaskManagerStaticQueue);
+    ReadDigitalQueue = xQueueCreateStatic(20, sizeof(uint32_t), ReadDigitalArray, &ReadDigitalStaticQueue);
+    ReadAnalogQueue = xQueueCreateStatic(20, sizeof(uint32_t), ReadAnalogArray, &ReadAnalogStaticQueue);
+    PulseInQueue = xQueueCreateStatic(20, sizeof(uint32_t), PulseInArray, &PulseInStaticQueue);
+    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 1024, NULL, 10, &PulseInHandle, 0);
+    xTaskCreatePinnedToCore(ReadDigitalFunction, "ReadDigital", 1024, NULL, 2, &ReadDigitalHandle, 0);
+    xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 1024, NULL, 2, &ReadAnalogHandle, 0);
+    xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 1024, NULL, 10, &TaskManagerHandle, 0);
 
-    uint32_t item_to_queue = SENS_PACKET;
-    xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
-
-    get_sensors_packets = true;
-    Serial.println(uxTaskGetStackHighWaterMark(TaskManagerHandle));
-    Serial.println(uxTaskGetStackHighWaterMark(PulseInHandle));
+    muxcore.println("PulseIn heap", uxTaskGetStackHighWaterMark(PulseInHandle));
+    muxcore.println("ReadDigital heap", uxTaskGetStackHighWaterMark(ReadDigitalHandle));
+    muxcore.println("ReadAnalog heap", uxTaskGetStackHighWaterMark(ReadAnalogHandle));
+    muxcore.println("TaskManager heap", uxTaskGetStackHighWaterMark(TaskManagerHandle));
+    muxcore.println("Free heap", ESP.getFreeHeap());
+    muxcore.println("Max allocable heap block", ESP.getMaxAllocHeap());
 }
 
 void Mux::loop()
 {
+    if (mux_data[8] == 50 && !sens_packet_stopped)
+        sens_packet_stopped = true;
+    return;
 }

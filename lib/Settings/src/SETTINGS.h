@@ -52,8 +52,8 @@
 
 /* #region  Altre informazioni */
 // #define ENABLE_WEBSERIAL
-#define ENCODER_TEETH 28
-#define WHEEL_DIAMETER 122.5 // mm - old: 91
+#define ENCODER_TEETH 30
+#define WHEEL_DIAMETER 58 // mm - old: 91
 #define GEAR_RATIO 1 // 1:5 = 0.2 | drive gear teeth : driven gear teeth -- NUOVO: 1:1
 /* #endregion */
 
@@ -61,6 +61,7 @@
 #define ENABLE_OBSTACLE_AVOIDANCE true
 #define ENABLE_MOVEMENT_SENSORS false
 #define ENABLE_ENCODER true
+#define ENABLE_BAT_VOLTAGE_SENSING false
 
 /**
  * Accelerazione che il robot subisce quando viene fermato di colpo
@@ -73,8 +74,9 @@
 /* #region  Navigation.cpp */
 #define ENABLE_AUTO_NAVIGATION true // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_ENCODER abilitati
 #define ENABLE_ROTATION_SENSING true
-#define ENABLE_ROTATION_LOOP true // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
+#define ENABLE_ROTATION_LOOP false // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
 #define ENABLE_BORDERMODE false
+#define LOG_MAP false
 /* #endregion */
 
 /* #region  Nomi costanti codice */
@@ -82,8 +84,8 @@
 #define CHANNEL_LEFT 1
 #define CHANNEL_RIGHT 2
 #define CHANNEL_MAIN 3
-#define FWD 1
-#define BCK 0
+#define FWD 0
+#define BCK 1
 #define MOT_BASE_VAL 255
 #define MOT_MIN_VAL 150
 #define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
@@ -102,7 +104,11 @@
 #define RUNNING 12
 #define STOP 13
 #define TOGGLE 14
+#define NOT_FOUND 4294967295
+#define ACCESSIBLE 0
+#define OBSTACLE 1
+#define BORDER 2
 /* #endregion */
 
-#define SHOW_MODULE_EXECUTION_TIME true
+#define SHOW_MODULE_EXECUTION_TIME false
 #define ENABLE_LOGGING // commentare per disabilitare il logging delle informazioni nella porta seriale

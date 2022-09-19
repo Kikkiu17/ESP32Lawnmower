@@ -3,11 +3,13 @@
 
 #include <Arduino.h>
 #include <SETTINGS.h>
+#include <tuple>
 
 class NAV
 {
     public:
         void update();
+        void begin();
         // Ruota per un certo numero di gradi automaticamente
         void rotateForDeg(int16_t heading);
         // Ruota fino a un certo heading, con la direzione di rotazione specificata
@@ -64,6 +66,13 @@ class NAV
          */
         uint16_t invertHDG(uint16_t heading);
 
+        void test_func();
+        void mapBorderMode(bool on_off = false);
+
+        void sdspeedtest();
+        void eraseSD(const __FlashStringHelper *path);
+        void readBlock(uint32_t block);
+
     private:
         // Inutilizzato
         void checkDirectionsDeg();
@@ -95,7 +104,50 @@ class NAV
          */
         int32_t convertHDGTo180(uint16_t heading, bool always_positive = false);
 
+        /**
+         * Ferma il robot e reimposta solo le variabili di movimento principali (going fwd/bck, robot moving, rotating, dst traveled)
+         * 
+         */
         void stop();
+
+        /**
+         * Aggiunge un certo valore ai vettori di distanza percorsa attuali e li restituisce senza modificarli effettivamente
+         *
+         * @param value_to_add valore da aggiungere ai vettori
+         * @param heading heading formato 360°
+         * @return std::tuple<int32_t, int32_t> - primo valore: vettore X; secondo valore: vettore Y
+         */
+        std::tuple<int32_t, int32_t> addToVectors(int32_t value_to_add, uint32_t heading);
+
+        /**
+         * Scompone il vettore dato
+         *
+         * @param value_to_add lunghezza vettore
+         * @param heading angolo vettore formato 360°
+         * @return std::tuple<int32_t, int32_t> - primo valore: vettore X; secondo valore: vettore Y
+         */
+        std::tuple<int32_t, int32_t> getVectors(int32_t value_to_add, uint32_t heading);
+
+        int countDigits(int number)
+        {
+            return int(log10(number) + 1);
+        }
+
+        /**
+         * Cerca in che blocco della mappa il robot si trova, poi carica i valori in navmap.xvals - navmap.yvals - navmap.idvals
+         * 
+         * @return uint32_t - blocco
+         */
+        uint32_t getCurrentBlock();
+
+        /**
+         * Restituisce la distanza dal punto più vicino.
+         * Include chiamata a getCurrentBlock()
+         * 
+         * @param point_type tipo di punto
+         * @return std::tuple<uint32_t, uint32_t, uint32_t> - distanza dal punto, id punto, index punto
+         */
+        std::tuple<uint32_t, uint32_t, uint32_t> getClosestPointDst(uint32_t point_type = 200);
 };
 
 #endif

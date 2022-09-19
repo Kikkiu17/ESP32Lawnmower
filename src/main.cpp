@@ -35,7 +35,7 @@ void setup()
   SerialBT.begin("ESP32ROBOT");
 
   /* #region  WiFi, ElegantOTA */
-  WiFi.mode(WIFI_STA);
+  /*WiFi.mode(WIFI_STA);
   WiFi.begin(wificreds.ssid, wificreds.password);
 
   while (WiFi.status() != WL_CONNECTED)
@@ -52,12 +52,7 @@ void setup()
             { request->send(200, "text/plain", "Hi! I am ESP32."); });
 
   AsyncElegantOTA.begin(&server);
-  server.begin();
-
-  #ifdef ENABLE_WEBSERIAL
-    WebSerial.begin(&server);
-    WebSerial.msgCallback(recvMsg);
-  #endif
+  server.begin();*/
   /* #endregion */
 
   core.begin();

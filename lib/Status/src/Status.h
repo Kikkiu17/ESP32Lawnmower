@@ -10,10 +10,10 @@ class Status
         void begin();
         void update();
         void setError(bool);
-        void setWarning(bool);
         void setRunning(bool);
         void setReady(bool);
         void mainMotorStarting();
+        void setInactive(bool);
 };
 
 #endif

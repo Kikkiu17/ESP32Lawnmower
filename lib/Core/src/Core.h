@@ -13,6 +13,7 @@ class Core
         void print(const char *TYPE, float VALUE = -25565);
         void print(const __FlashStringHelper* TYPE, float VALUE = -25565);
         void println(const __FlashStringHelper* TYPE, float VALUE = -25565);
+        void println(const String TYPE, float VALUE = -25565);
         void lowBat();
 };
 

@@ -3,6 +3,8 @@
 bool running_led_state = false;
 bool running = false;
 bool main_motor_starting = false;
+bool inactive = false;
+bool inactive_status = false;
 uint8_t main_motor_warning = 0;
 
 uint32_t status_time1 = millis();
@@ -27,6 +29,20 @@ void Status::update()
             digitalWrite(RUNNING_LED, running_led_state);
         }
 
+        if (inactive)
+        {
+            if (!inactive_status)
+            {
+                ledcWrite(CHANNEL_MAIN, 7);
+                inactive_status = !inactive_status;
+            }
+            else
+            {
+                ledcWrite(CHANNEL_MAIN, 0);
+                inactive_status = !inactive_status;
+            }
+        }
+
         status_time1 = millis();
     }
 
@@ -34,7 +50,7 @@ void Status::update()
     {
         if (diff1 > 50)
         {
-            if (main_motor_warning < 75)
+            if (main_motor_warning < 25)
             {
                 running_led_state = !running_led_state;
                 digitalWrite(RUNNING_LED, running_led_state);
@@ -63,7 +79,6 @@ void Status::setRunning(bool condition)
 {
     running = condition;
     setError(false);
-    setWarning(false);
 }
 
 void Status::setError(bool condition)
@@ -76,17 +91,27 @@ void Status::setError(bool condition)
     }
 }
 
-void Status::setWarning(bool condition)
-{
-    //digitalWrite(ERROR_LED, condition);
-    if(condition == true)
-    {
-        running = false;
-        setError(false);
-    }
-}
-
 void Status::mainMotorStarting()
 {
     main_motor_starting = true;
+}
+
+void Status::setInactive(bool state)
+{
+    inactive = state;
+    if (state)
+    {   
+        inactive_status = false;
+        ledcSetup(CHANNEL_MAIN, 496, 8);
+        setReady(false);
+        setRunning(false);
+        main_motor_warning = 0;
+        main_motor_starting = false;
+    }
+    else
+    {
+        inactive_status = false;
+        ledcSetup(CHANNEL_MAIN, 100, 8);
+        setReady(true);
+    }
 }

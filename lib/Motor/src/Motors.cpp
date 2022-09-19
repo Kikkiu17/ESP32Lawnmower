@@ -15,6 +15,7 @@ Core motorscore;
 NAV motornav;
 Mux motormux;
 uint32_t t1 = 0;
+#define MAIN_MOT_FREQ 100
 
 struct MainMotor
 {
@@ -50,6 +51,7 @@ uint8_t robot_not_moving;
 int32_t heading_to_maintain;
 bool maintain_heading = false;
 char direction;
+bool reverse_heading = false;
 
 uint32_t time_1 = millis();
 uint32_t time_2 = millis();
@@ -81,11 +83,7 @@ void Motors::update()
             if (time_2 - time_1 > 150)
             {
                 time_1 = millis();
-
-                if (direction == 's')
-                    maintainHeading(true);
-                else
-                    maintainHeading();
+                maintainHeading();
             }
         }
     }
@@ -160,7 +158,7 @@ void Motors::update()
         {
             if (millis() - mainmotor.playsound.time > 250)
             {
-                ledcSetup(CHANNEL_MAIN, 100, 8);
+                ledcSetup(CHANNEL_MAIN, MAIN_MOT_FREQ, 8);
                 ledcWrite(CHANNEL_MAIN, 0);
                 mainmotor.playsound.active = false;
                 mainmotor.playsound.note_n = 0;
@@ -214,6 +212,7 @@ void Motors::forward()
         heading_to_maintain = motorsensor.getHeading();
         maintain_heading = true;
         robot_moving = true;
+        reverse_heading = false;
         motorsensor.setMotorsRotating();
     }
 
@@ -238,6 +237,7 @@ void Motors::backwards()
         heading_to_maintain = motorsensor.getHeading();
         maintain_heading = true;
         robot_moving = true;
+        reverse_heading = true;
         motorsensor.setMotorsRotating();
     }
 
@@ -292,14 +292,14 @@ char Motors::getDirection()
     return direction;
 }
 
-void Motors::maintainHeading(bool reverse)
+void Motors::maintainHeading()
 {
     // DESTRA: DIFF NEGATIVO; SINISTRA: DIFF POSITIVO
 
     int32_t current_heading = motorsensor.getHeading();
     int32_t diff = heading_to_maintain - current_heading;
 
-    if (reverse)
+    if (reverse_heading)
         diff *= -1; // inverte destra e sinistra se il robot sta andando indietro
 
     if (diff < 0)

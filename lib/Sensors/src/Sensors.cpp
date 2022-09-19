@@ -29,7 +29,6 @@ TaskHandle_t MPU6050Status;
 
 // variabili
 bool mpu_ready = false;
-bool mpu_busy = false;
 int32_t forward_filter_acc_data = 0;
 int32_t backwards_filter_acc_data = 0;
 uint8_t times_acc_data_is_gathered = 0;
@@ -59,6 +58,7 @@ int total_acceleration = 0;
 int stop_acc_1 = 0;
 int stop_acc_2 = 0;
 bool sensor_autorun = false;
+uint16_t inactivity_count = 0;
 
 bool check_rotation = false;
 int32_t last_heading = 0;
@@ -68,7 +68,6 @@ bool not_rotating = false;
 const int rotations_to_check = 50;
 
 uint64_t *sensor_packetptr;
-bool sensor_packet_ispolling = false;
 
 bool US_front_obstacle_detected = false;
 
@@ -129,37 +128,6 @@ void IRAM_ATTR dmpDataReady()
 
 bool selftest[3] = {false};
 
-struct Ultrasonic_Sensor
-{
-    bool get_front_obstacle = false;
-    bool FRONT_checked = false;
-    bool RIGHT_checked = false;
-    bool LEFT_checked = false;
-    bool check_next = false;
-    uint8_t request_type = DEFAULT;
-    uint32_t time_ref = 0;
-    bool enable = false;
-};
-
-struct Ultrasonic_request
-{
-    bool active = false;
-    bool returned = false;
-    uint8_t sensor_direction = FRONT;
-    uint32_t distance_measured = 0;
-    uint32_t last_distance_measured = 0;
-    uint8_t request_type = DEFAULT;
-    bool confirm_distance = false;
-};
-
-struct Infrared_Sensor
-{
-    bool enable = false;
-    uint32_t timer = millis();
-    bool obstacle_detected = false;
-    uint8_t request_type = DEFAULT;
-};
-
 struct Encoder
 {
     bool active = false;
@@ -193,22 +161,36 @@ struct SetZero
 
 struct SensorPacket
 {
-    uint64_t us_f = 0;
-    uint64_t us_l = 0;
-    uint64_t us_r = 0;
-    uint64_t ir_f = 0;
-    uint64_t ir_l = 0;
-    uint64_t bat = 0;
+    struct
+    {
+        uint64_t us_f = 0;
+        uint64_t us_l = 0;
+        uint64_t us_r = 0;
+        uint64_t ir_f = 0;
+        uint64_t ir_l = 0;
+        bool check_next_dst = false;
+    } obstacle;
+
+    struct
+    {
+        uint64_t value = 0;
+        uint64_t n_values = 0;
+        uint64_t total = 0;
+        bool waiting = false;
+
+    } bat;
+
     uint64_t read_digital = 0;
     uint64_t read_analog = 0;
-    uint64_t packet_id = 0;
-    uint64_t last_packet_id = 0;
-    bool check_next_dst = false;
+
+    struct
+    {
+        uint64_t id = 0;
+        uint64_t last_id = 0;
+        bool is_polling = false;
+    } info;
 };
 
-Ultrasonic_request US_REQ;
-Ultrasonic_Sensor Ultrasonic;
-Infrared_Sensor Infrared;
 Encoder encoder;
 SetZero setzero;
 SensorPacket senspacket;
@@ -276,6 +258,21 @@ void MPU6050StatusFunction(void *param)
     }
 }
 
+uint32_t aagin = 0;
+uint32_t last_aagin = 0;
+uint32_t aagin_diff = 0;
+
+void IRAM_ATTR test()
+{
+    uint32_t this_aagin = millis();
+    if (this_aagin - last_aagin > 6)
+    {
+        aagin++;
+        aagin_diff = this_aagin - last_aagin;
+        last_aagin = this_aagin;
+    }
+}
+
 void Sensors::begin()
 {
     xTaskCreatePinnedToCore(MPU6050StatusFunction, "MPU6050Status", 2000, NULL, 24, &MPU6050Status, 0);
@@ -283,13 +280,8 @@ void Sensors::begin()
     /* #region  Inizializzazione MPU6050 */
     Wire.begin(21, 22);
     Wire.setClock(400000);
-    sensorcore.println(F("Initializing I2C devices..."));
     mpu.initialize();
-    sensorcore.println(F("Scala accelerometro"), mpu.getFullScaleAccelRange());
-    sensorcore.println(F("Scala giroscopio"), mpu.getFullScaleGyroRange());
     pinMode(INTERRUPT_PIN, INPUT);
-    sensorcore.println(F("Testing device connections..."));
-    sensorcore.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
     if (mpu.testConnection())
     {
         selftest[0] = true;
@@ -312,7 +304,6 @@ void Sensors::begin()
         mpu.PrintActiveOffsets();
         sensorcore.println(F("Enabling DMP..."));
         mpu.setDMPEnabled(true);
-        sensorcore.print(F("Enabling interrupt detection - Arduino external interrupt"), digitalPinToInterrupt(INTERRUPT_PIN));
         attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
         mpuIntStatus = mpu.getIntStatus();
         sensorcore.println(F("DMP ready! Waiting for first interrupt..."));
@@ -328,7 +319,7 @@ void Sensors::begin()
     }
     /* #endregion */
 
-    pinMode(RPM_SENS, INPUT);
+    pinMode(RPM_SENS, INPUT_PULLDOWN);
     pinMode(BAT, INPUT);
 
     sensor_packetptr = sensormux.getPacketPointer();
@@ -354,65 +345,112 @@ void Sensors::update()
 {
     uint32_t start_time = micros();
 
-    if (millis() - TEMP_TIME > 10000)
+    if (millis() - TEMP_TIME > 30)
     {
+        inactivity_count++;
+
         TEMP_TIME = millis();
-        /*float raw_air_temp = mpu.getTemperature();
-        float air_temp = (raw_air_temp / 340) + 36.53; // da datasheet MPU6050*/
-        //if (getBatADC() < 2770)
-        //    sensorcore.lowBat();
+        if (!senspacket.bat.waiting && !senspacket.info.is_polling)
+        {
+            senspacket.bat.waiting = true;
+            senspacket.info.last_id = senspacket.info.id;
+            sensormux.readAnalog(BAT);
+        }
+        else if (senspacket.bat.waiting && !senspacket.info.is_polling)
+        {
+            senspacket.bat.waiting = false;
+            senspacket.read_analog = *(sensor_packetptr + 7);
+            senspacket.info.id = *(sensor_packetptr + 8);
+            if (senspacket.info.id > senspacket.info.last_id)
+            {
+                senspacket.info.last_id = senspacket.info.id;
+                senspacket.bat.n_values++;
+                if (senspacket.bat.n_values == 20)
+                {
+                    if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700)
+                        sensorcore.lowBat();
+                    senspacket.bat.total = 0;
+                    senspacket.bat.n_values = 0;
+                }
+                else if (senspacket.read_analog < 4000 && senspacket.read_analog > 700)
+                    senspacket.bat.total += senspacket.read_analog;
+                else
+                    senspacket.bat.total += 3300;
+            }
+        }
+        else if (senspacket.bat.waiting && senspacket.info.is_polling)
+            senspacket.bat.waiting = false;
+
+        if (inactivity_count > 20000) // 10 minuti
+        {
+            
+        }
     }
 
     // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
-    if (sensor_packet_ispolling)
+    if (senspacket.info.is_polling)
     {
-        senspacket.us_f = *(sensor_packetptr);
-        senspacket.us_l = *(sensor_packetptr + 1);
-        senspacket.us_r = *(sensor_packetptr + 2);
-        senspacket.ir_f = *(sensor_packetptr + 3);
-        senspacket.ir_l = *(sensor_packetptr + 4);
-        senspacket.bat = *(sensor_packetptr + 5);
+        senspacket.obstacle.us_f = *(sensor_packetptr);
+        senspacket.obstacle.us_l = *(sensor_packetptr + 1);
+        senspacket.obstacle.us_r = *(sensor_packetptr + 2);
+        senspacket.obstacle.ir_f = *(sensor_packetptr + 3);
+        senspacket.obstacle.ir_f = *(sensor_packetptr + 4);
+        senspacket.bat.value = *(sensor_packetptr + 5);
         senspacket.read_digital = *(sensor_packetptr + 6);
         senspacket.read_analog = *(sensor_packetptr + 7);
-        senspacket.packet_id = *(sensor_packetptr + 8);
+        senspacket.info.id = *(sensor_packetptr + 8);
 
-        if (senspacket.packet_id > senspacket.last_packet_id)
+        if (senspacket.info.id > senspacket.info.last_id)
         {
-            sensorcore.println("PACKET ID", senspacket.packet_id);
-            sensorcore.println("LAST PACKET ID", senspacket.last_packet_id);
-            if (senspacket.us_f < US_SENS_DST_TRIG)
+            if (senspacket.obstacle.us_f < US_SENS_DST_TRIG)
             {
-                if (!senspacket.check_next_dst)
-                    senspacket.check_next_dst = true;
+                if (!senspacket.obstacle.check_next_dst)
+                    senspacket.obstacle.check_next_dst = true;
                 else
                 {
-                    Serial.println("US F STOP");
-                    senspacket.check_next_dst = false;
+                    senspacket.obstacle.check_next_dst = false;
+                    sensorcore.println(F("(Sensors.cpp) US FRONT STOP"));
+                    sensornav.obstacleDetectedWhileMoving(ULTRASONIC, FRONT);
                 }
             }
-            else if (senspacket.us_l < US_SENS_DST_TRIG)
+            else if (senspacket.obstacle.us_l < US_SENS_DST_TRIG)
             {
-                if (!senspacket.check_next_dst)
-                    senspacket.check_next_dst = true;
+                if (!senspacket.obstacle.check_next_dst)
+                    senspacket.obstacle.check_next_dst = true;
                 else
                 {
-                    Serial.println("US L STOP");
-                    senspacket.check_next_dst = false;
+                    senspacket.obstacle.check_next_dst = false;
+                    sensorcore.println(F("(Sensors.cpp) US LEFT STOP"));
+                    sensornav.obstacleDetectedWhileMoving(ULTRASONIC, LEFT);
                 }
             }
-            else if (senspacket.us_r < US_SENS_DST_TRIG)
+            else if (senspacket.obstacle.us_r < US_SENS_DST_TRIG)
             {
-                if (!senspacket.check_next_dst)
-                    senspacket.check_next_dst = true;
+                if (!senspacket.obstacle.check_next_dst)
+                    senspacket.obstacle.check_next_dst = true;
                 else
                 {
-                    Serial.println("US R STOP");
-                    senspacket.check_next_dst = false;
+                    senspacket.obstacle.check_next_dst = false;
+                    sensorcore.println(F("(Sensors.cpp) US RIGHT STOP"));
+                    sensornav.obstacleDetectedWhileMoving(ULTRASONIC, RIGHT);
                 }
             }
+
+            senspacket.bat.n_values++;
+            if (senspacket.bat.n_values == 20)
+            {
+                if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700)
+                    sensorcore.lowBat();
+                senspacket.bat.total = 0;
+                senspacket.bat.n_values = 0;
+            }
+            else if (senspacket.bat.value < 4000 && senspacket.bat.value > 700)
+                senspacket.bat.total += senspacket.bat.value;
+            else
+                senspacket.bat.total += 3300;
         }
 
-        senspacket.last_packet_id = senspacket.packet_id;
+        senspacket.info.last_id = senspacket.info.id;
     }
 
     // le funzioni aspettano 100ms prima di controllare se c'è movimento, così danno il tempo al robot di cambiare direzione
@@ -445,7 +483,7 @@ void Sensors::update()
                         if (direction == 't')
                         {
                             moving = false;
-                            sensor_packet_ispolling = false;
+                            senspacket.info.is_polling = false;
                             return;
                         }
 
@@ -602,7 +640,7 @@ void Sensors::update()
                             rotation_checked = 0;
                             last_heading = 0;
                             moving = true;
-                            sensor_packet_ispolling = true;
+                            senspacket.info.is_polling = true;
                             sensormux.sensPacketUpdate(true);
                         }
                     }
@@ -642,7 +680,7 @@ void Sensors::update()
                     not_moving_warnings = 0;
                     movement_checked = 0;
                     moving = true;
-                    sensor_packet_ispolling = true;
+                    senspacket.info.is_polling = true;
                     sensormux.sensPacketUpdate(true);
                 }
             }
@@ -653,9 +691,9 @@ void Sensors::update()
             char direction = sensormotors.getDirection();
             if (direction == 'w' && ENABLE_OBSTACLE_AVOIDANCE)
             {
-                if (!sensor_packet_ispolling)
+                if (!senspacket.info.is_polling)
                 {
-                    sensor_packet_ispolling = true;
+                    senspacket.info.is_polling = true;
                     sensormux.sensPacketUpdate(true);
                 }
             }
@@ -790,9 +828,6 @@ void Sensors::update()
             /* #endregion */
         }
     }
-
-    /*if (sensor_autorun)
-        sensornav.setLateralObstacle(getLeftInfrared());*/
 }
 
 uint32_t Sensors::getTime()
@@ -904,7 +939,7 @@ int32_t Sensors::getHeading()
     return incl;
 }
 
-int Sensors::getEncoderPeriod()
+int IRAM_ATTR Sensors::getEncoderPeriod()
 {
     uint16_t diff = 0;
     bool allow_return = false;
@@ -922,7 +957,6 @@ int Sensors::getEncoderPeriod()
                 allow_second_edge = false;
                 time2 = millis();
                 diff = time2 - time1;
-
                 allow_return = true;
             }
             else
@@ -962,7 +996,7 @@ void Sensors::resetMovementVars()
     not_moving_warnings = 0;
     movement_checked = 0;
     times_acc_data_is_gathered = 0;
-    sensor_packet_ispolling = false;
+    senspacket.info.is_polling = false;
     sensormux.sensPacketUpdate(false);
 }
 
@@ -1000,32 +1034,6 @@ void Sensors::setAutoRun(bool state)
     sensor_autorun = state;
 }
 
-void Sensors::returnUSDistance(float dst)
-{
-    US_REQ.returned = true;
-    US_REQ.distance_measured = dst;
-}
-
-void Sensors::getFrontUSObstacle(uint8_t req_type)
-{
-    if (!Ultrasonic.enable && !US_REQ.active)
-    {
-        Ultrasonic.get_front_obstacle = true;
-        Ultrasonic.request_type = req_type;
-        Ultrasonic.time_ref = millis();
-        Ultrasonic.enable = true;
-    }
-}
-
-void Sensors::checkFrontObstacle(uint8_t request_type)
-{
-    Infrared.request_type = request_type;
-    Ultrasonic.request_type = request_type;
-    US_REQ.request_type = request_type;
-    Infrared.enable = true; // Ultrasonic.enable viene controllato da Infrared
-    Infrared.timer = millis();
-}
-
 float Sensors::getLastTraveledDistance()
 {
     return encoder.last_traveled_distance;
@@ -1038,14 +1046,4 @@ uint16_t Sensors::getBatADC()
     for (int i = 0; i < 50; i++)
         tot_voltage += analogRead(BAT);
     return tot_voltage / 50;
-}
-
-void Sensors::setMPUBusy()
-{
-    mpu_busy = true;
-}
-
-void Sensors::setMPUReady()
-{
-    mpu_busy = false;
 }

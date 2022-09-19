@@ -7,6 +7,17 @@
 #include <WebSerial.h>
 #endif
 #include <SETTINGS.h>
+#include <tuple>
+#include <SPI.h>
+#include <SD.h>
+#define MOSI 17
+#define MISO 35
+#define SCLK 15
+#define CS 23
+#define UINT_LEADING_ZEROES 9 // sono 8 per gli int negativi
+#define MAP_BLOCK_SIZE 5632   // byte
+
+SPIClass *spi = NULL;
 
 Sensors NAVSensors;
 Motors NAVMotors;
@@ -14,6 +25,18 @@ Core NAVCore;
 BluetoothSerial NAVSerial;
 uint32_t t3 = 0;
 
+File mapfile;
+
+/*
+
+CODICI BLOCCHI MAPPA
+0: accessibile
+1: non accessbile
+2: bordo mappa
+
+*/
+
+/// OBSOLETO ///
 /*
     // I VALORI DEL GIROSCOPIO SONO MOLTIPLICATI TUTTI PER 100 (data type uint32_t)
     // TUTTI GLI ALTRI VALORI HANNO COME UNITA' DI MISURA cm (data type uint32_t)
@@ -48,10 +71,6 @@ uint32_t t3 = 0;
    ----------------------------------
 */
 
-int8_t quadrant = 0;
-int8_t coarse_dir = 0;
-float vector_slope = 0.00;
-
 bool autorun = false;
 uint32_t distance_target = 0;
 uint8_t distance_traveled_before_uturn_sudden_stop = 0;
@@ -75,6 +94,8 @@ bool robot_moving_x_y = false;
 uint32_t timer = millis();
 uint8_t obstacle_sensor_direction = FRONT;
 uint8_t obstacle_sensor_type = INFRARED;
+bool bordermode = false;
+uint32_t bordermode_start_time = 0;
 
 // stage di movimento
 uint8_t stages = 0;
@@ -84,6 +105,12 @@ struct Vectors
     float xvector = 0;
     float yvector = 0;
     float last_dst = 0;
+    float *xvec_ptr = &xvector;
+    float *yvec_ptr = &yvector;
+    int32_t intxvector = (int32_t)(*xvec_ptr * 100);
+    int32_t intyvector = (int32_t)(*yvec_ptr * 100);
+    uint32_t pos_intxvector = (intxvector < 0) ? intxvector * -1 : intxvector;
+    uint32_t pos_intyvector = (intyvector < 0) ? intyvector * -1 : intyvector;
 };
 
 struct
@@ -120,24 +147,24 @@ struct
     bool done = false;
 } RotateUntil;
 
-struct
+struct NavMap
 {
-    bool active = false;
-    bool completed = false;
-    float relative_right_angle = 0.00;
-    bool lateral_obstacle_detected = false;
-    uint8_t stages = 0;
-    bool check_straight_path = false;
-    uint16_t last_lateral_distance = 0;
-    bool obstacle_detected = false;
-} BorderMode;
+    uint32_t current_block = 0;
+    int32_t arrX[256] = {};
+    int32_t arrY[256] = {};
+    uint8_t arrID[256] = {};
+    int32_t xvals[256] = {};
+    int32_t yvals[256] = {};
+    uint8_t idvals[256] = {};
+};
 
 Vectors vectors;
+NavMap navmap;
+uint32_t test = 0;
 
 void NAV::update()
 {
     uint64_t start_time = micros();
-
     if (going_forward)
     {
         distance_traveled = NAVSensors.getTraveledDistance();
@@ -147,7 +174,6 @@ void NAV::update()
 
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
-            NAVMotors.stop();
             stop();
             going_forward = false;
             gone_forward = true;
@@ -161,7 +187,6 @@ void NAV::update()
 
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
-            NAVMotors.stop();
             stop();
             going_backwards = false;
             gone_backwards = true;
@@ -171,147 +196,47 @@ void NAV::update()
 
     if (obstacle_detected)
     {
-        NAVCore.println((char *)"(Navigation.cpp) OBSTACLE DETECTED");
+        NAVCore.println(F("(Navigation.cpp) OBSTACLE DETECTED"));
         obstacle_detected = false;
         going_forward = false;
-        // non è necessario NAVMotors.stop(), il robot viene fermato automaticamente dalla sensoristica
 
+        stop();
+        uint32_t hdg = getHDG();
+        int32_t xvec, yvec;
+        std::tie(xvec, yvec) = addToVectors(5, hdg);
+        mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
+        mapfile.print(xvec);
+        mapfile.print(F(","));
+        mapfile.print(yvec);
+        mapfile.print(F(","));
+        mapfile.print(1);
+        mapfile.print(F(","));
+        mapfile.close();
+            
         if (autorun)
         {
             // queste azioni vengono fatte solo se il robot è in modalità AUTO
-            // altrimenti, sono attivi solo i sensori (il robot si ferma a un'ostacolo)
-            if (!BorderMode.active && !BorderMode.completed && ENABLE_BORDERMODE)
+            // altrimenti, sono attivi solo i sensori (il robot si ferma a un ostacolo)
+            if (!UTurn.active)
             {
-                BorderMode.active = true;
-                BorderMode.stages = 0;
-                timer = millis();
+                // attiva l'u-turn solo se questo non è in corso
+                stop();
+                enableUTurn();
             }
-            else if (BorderMode.active && ENABLE_BORDERMODE)
-                BorderMode.obstacle_detected = true;
-
-            if (BorderMode.completed && ENABLE_BORDERMODE)
+            else
             {
-                if (!UTurn.active)
-                {
-                    // attiva l'u-turn solo se questo non è in corso
-                    enableUTurn();
-                }
-                else
-                {
-                    // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
-                    // resetta l'u-turn poi continua
-                    disableUTurn();
-                    UTurn.isBlocked = true;
-                }
-            }
-            else if (!ENABLE_BORDERMODE)
-            {
-                if (!UTurn.active)
-                {
-                    // attiva l'u-turn solo se questo non è in corso
-                    enableUTurn();
-                }
-                else
-                {
-                    // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
-                    // resetta l'u-turn poi continua
-                    disableUTurn();
-                    UTurn.isBlocked = true;
-                }
+                // se l'u-turn è in corso, quindi il robot sta andando avanti durante questa fase, allora il robot deve saltare all'ultima fase dell'uturn
+                // resetta l'u-turn poi continua
+                disableUTurn();
+                UTurn.isBlocked = true;
             }
         }
+        else
+            externalStop();
     }
 
     if (obstacle_detected_before_moving)
-    {
-        obstacle_detected_before_moving = false;
-
-        if (BorderMode.active)
-            BorderMode.obstacle_detected = true;
-    }
-
-    if (BorderMode.active)
-    {
-        switch (BorderMode.stages)
-        {
-            case 0:
-            {
-                if (millis() - timer > GLOBAL_NAV_DELAY)
-                {
-                    BorderMode.stages++;
-                    gone_backwards = false;
-                    rotateForDeg(10);
-                }
-                break;
-            }
-            case 1:
-            {
-                if (rotated)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        BorderMode.stages++;
-                        rotated = false;
-                        goForward();
-                    }
-                }
-                else
-                    timer = millis();
-                break;
-            }
-            case 2:
-            {
-                if (BorderMode.obstacle_detected)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        BorderMode.stages = 0;
-                        BorderMode.obstacle_detected = false;
-                    }
-                }
-                else if (BorderMode.lateral_obstacle_detected)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        BorderMode.stages++;
-                        rotateUntil('r', &BorderMode.lateral_obstacle_detected, false);
-                    }
-                }
-                else
-                    timer = millis();
-                break;
-            }
-            case 3:
-            {
-                if (RotateUntil.done)
-                {
-                    if (millis() - timer > GLOBAL_NAV_DELAY)
-                    {
-                        BorderMode.stages++;
-                        RotateUntil.done = false;
-                        goForward();
-                    }
-                }
-                else
-                    timer = millis();
-                break;
-            }
-            case 4:
-            {
-                if (BorderMode.lateral_obstacle_detected)
-                {
-                    NAVMotors.setSpeed(150, RIGHT);
-                    NAVMotors.setSpeed(255, LEFT);
-                }
-                else
-                {
-                    NAVMotors.setSpeed(150, LEFT);
-                    NAVMotors.setSpeed(255, RIGHT);
-                }
-                break;
-            }
-        }
-    }
+        obstacle_detected_before_moving = false;    
 
     if (RotateUntil.active)
     {
@@ -322,7 +247,6 @@ void NAV::update()
 
         if (*RotateUntil.var_ptr == RotateUntil.condition)
         {
-            NAVMotors.stop();
             stop();
             RotateUntil.done = true;
             RotateUntil.active = false;
@@ -396,7 +320,6 @@ void NAV::update()
 
         if (currentHDG > heading_target - 50 && currentHDG < heading_target + 50)
         {
-            NAVMotors.stop();
             stop();
             NAVSensors.resetMovementVars();
             rotating = false;
@@ -481,9 +404,7 @@ void NAV::update()
                 }
             }
             else
-            {
                 timer = millis();
-            }
             break;
         }
         case 2:
@@ -498,9 +419,7 @@ void NAV::update()
                 }
             }
             else
-            {
                 timer = millis();
-            }
             break;
         }
         case 3:
@@ -512,19 +431,13 @@ void NAV::update()
                     stages++;
                     gone_forward = false;
                     if (UTurn.lastMove == 'R')
-                    {
                         rotateForDeg(90);
-                    }
                     else
-                    {
                         rotateForDeg(-90);
-                    }
                 }
             }
             else
-            {
                 timer = millis();
-            }
             break;
         }
         case 4:
@@ -546,9 +459,7 @@ void NAV::update()
                 }
             }
             else
-            {
                 timer = millis();
-            }
             break;
         }
         case 5:
@@ -663,11 +574,8 @@ void NAV::update()
 
     if (robot_moving_x_y)
     {
-        uint32_t hdg_360 = getHDG();
-        float dst = NAVSensors.getLastTraveledDistance();
-
         /**
-         * Heading in modailtà 180°
+         * Heading in modailtà 360°
          * Il vettore X è positivo verso 90°
          * Il vettore Y è positivo verso 0°
          * |         0°         |
@@ -677,8 +585,10 @@ void NAV::update()
          * |        180°        |
          */
 
-        if (vectors.last_dst != dst)
+        float dst = NAVSensors.getLastTraveledDistance();
+        if (vectors.last_dst != dst && dst > 0.05)
         {
+            uint32_t hdg_360 = getHDG();
             vectors.last_dst = dst;
 
             // i vettori si alternano sin e cos perché il riferimento dell'heading cambia in base al quadrante
@@ -718,6 +628,83 @@ void NAV::update()
                 vectors.xvector -= dst * cos(rad); // negativo per X
                 vectors.yvector += dst * sin(rad); // positivo per Y
             }
+
+            if (LOG_MAP || bordermode)
+            {
+                mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
+                if (vectors.xvector < 0)
+                {
+                    mapfile.print(F("-"));
+                    for (int i = 0; i < UINT_LEADING_ZEROES - 1 - countDigits((uint32_t)(vectors.xvector * -100)); i++)
+                        mapfile.print(F("0"));
+
+                    mapfile.print((uint32_t)(vectors.xvector * -100));
+                }
+                else
+                {
+                    for (int i = 0; i < UINT_LEADING_ZEROES - countDigits((uint32_t)(vectors.xvector * 100)); i++)
+                        mapfile.print(F("0"));
+
+                    mapfile.print((uint32_t)(vectors.xvector * 100));
+                }
+
+                mapfile.print(F(","));
+
+                if (vectors.yvector < 0)
+                {
+                    mapfile.print(F("-"));
+                    for (int i = 0; i < UINT_LEADING_ZEROES - 1 - countDigits((uint32_t)(vectors.yvector * -100)); i++)
+                        mapfile.print(F("0"));
+
+                    mapfile.print((uint32_t)(vectors.yvector * -100));
+                }
+                else
+                {
+                    for (int i = 0; i < UINT_LEADING_ZEROES - countDigits((uint32_t)(vectors.yvector * 100)); i++)
+                        mapfile.print(F("0"));
+
+                    mapfile.print((uint32_t)(vectors.yvector * 100));
+                }
+
+                mapfile.print(F(","));
+
+                if (bordermode)
+                {
+                    mapfile.print(2);
+                    if ((vectors.xvector < 5 && vectors.xvector > -5) && (vectors.yvector < 5 && vectors.yvector > -5) && millis() - bordermode_start_time > 10000)
+                    {
+                        bordermode = false;
+                        stop();
+                        NAVCore.println("Bordermode COMPLETED");
+                    }
+                }
+                else
+                    mapfile.print(0);
+                mapfile.print(F(","));
+                mapfile.close();
+            }
+            
+            if (!bordermode)
+            {
+                uint32_t pos_xvector = (vectors.xvector < 0) ? ((uint32_t)(vectors.xvector * 100)) * -1 : (uint32_t)(vectors.xvector * 100);
+                uint32_t pos_yvector = (vectors.yvector < 0) ? ((uint32_t)(vectors.yvector * 100)) * -1 : (uint32_t)(vectors.yvector * 100);
+                if (pos_xvector > 200 && pos_yvector > 200)
+                {
+                    uint32_t pt_dst, pt_id, pt_idx;
+                    std::tie(pt_dst, pt_id, pt_idx) = getClosestPointDst();
+
+                    if (pt_id == BORDER)
+                    {
+                        if (pt_dst < 500)
+                        {
+                            NAVCore.println("BORDER CLOSER THAN 5CM");
+                        }
+                    }
+                }
+            }
+
+            NAVCore.println("X: ", vectors.xvector);
+            NAVCore.println("Y: ", vectors.yvector);
         }
     }
 
@@ -760,22 +747,6 @@ void NAV::rotateForDeg(int16_t heading)
     */
 
     resetMovementVars();
-
-    if (heading == 90)
-    {
-        if (coarse_dir + 1 <= 3)
-            coarse_dir++;
-        else
-            coarse_dir = 0;
-    }
-    else
-    {
-        if (coarse_dir - 1 >= 0)
-            coarse_dir--;
-        else
-            coarse_dir = 3;
-    }
-
     int16_t heading_to_reach = heading * 100;
     if (heading_to_reach < 0)
         heading_to_reach = heading_to_reach + 36000; // 36000
@@ -820,73 +791,13 @@ void NAV::obstacleDetectedWhileMoving(uint8_t sensor_type, uint8_t sensor_direct
 
 void NAV::externalStop()
 {
-    BorderMode.active = false;
-    BorderMode.check_straight_path = false;
-    BorderMode.completed = false;
-    BorderMode.lateral_obstacle_detected = false;
     stop();
-    NAVMotors.stop();
     resetMovementVars();
     UTurn.active = false;
     autorun = false;
     NAVSensors.setAutoRun(false);
     NAVSensors.resetMovementVars();
     robot_moving_x_y = false;
-}
-
-void NAV::checkDirectionsDeg()
-{
-    float current_heading = getHDG();
-
-    /*
-            ----------------------------------
-            | 0° = X, avanti                 |
-            | 90° = Y, destra                |
-            | 180° = x, indietro             |
-            | 270° = y, sinistra             |
-            |                                |
-            |         0°                     |
-            |     /       \                  |
-            | 270°           90°             |
-            |     \       /                  |
-            |        180°                    |
-            |                                |
-            | 0 < x < 90: quadrant = 0;      |
-            | 90 < x < 180: quadrant = 1;    |
-            | 180 < x < 270: quadrant = 2;   |
-            | 270 < x < 360: quadrant = 3    |
-            |                                |
-            | vector slope guarda sempre     |
-            | il lato più basso (ad es, se   |
-            | quadrant = 2, vector slope si  |
-            | riferisce a 180°)              |
-            ----------------------------------
-    */
-
-    if (current_heading >= 0 && current_heading < 90)
-    {
-        // 0 < x < 90: quadrant = 0;
-        vector_slope = 90 - current_heading;
-        quadrant = 0;
-    }
-    else if (current_heading >= 90 && current_heading < 180)
-    {
-        // 90 < x < 180: quadrant = 1;
-        vector_slope = current_heading - 90;
-        quadrant = 1;
-    }
-    else if (current_heading >= 180 && current_heading < 270)
-    {
-        // 180 < x < 270: quadrant = 2;
-        vector_slope = current_heading - 180;
-        quadrant = 2;
-    }
-    else if (current_heading >= 270 && current_heading < 360)
-    {
-        // 270 < x < 360: quadrant = 3
-        vector_slope = current_heading - 270;
-        quadrant = 3;
-    }
 }
 
 uint16_t NAV::getHDG()
@@ -937,8 +848,11 @@ void NAV::disableUTurn()
 {
     stages = 0;
     UTurn.active = false;
-    gone_forward = false;
     rotated = false;
+    obstacle_detected = false;
+    gone_forward = false;
+    gone_backwards = false;
+    distance_target_reached = false;
     timer = millis();
     UTurn.isBlocked = false;
 }
@@ -1002,13 +916,9 @@ void NAV::rotateUntil(char dir, bool *var, bool condition)
     RotateUntil.active = true;
 }
 
-void NAV::setLateralObstacle(bool state)
-{
-    BorderMode.lateral_obstacle_detected = state;
-}
-
 void NAV::obstacleDetectedBeforeMoving(uint8_t sensor_type, uint8_t sensor_direction)
 {
+    stop();
     obstacle_sensor_type = sensor_type;
     obstacle_sensor_direction = sensor_direction;
     obstacle_detected_before_moving = true;
@@ -1027,6 +937,7 @@ int32_t NAV::convertHDGTo180(uint16_t heading, bool always_positive)
 
 void NAV::stop()
 {
+    NAVMotors.stop();
     robot_moving_x_y = false;
     going_forward = false;
     going_backwards = false;
@@ -1050,4 +961,330 @@ uint16_t NAV::invertHDG(uint16_t hdg)
         return return_hdg - 36000;
     else
         return return_hdg;
+}
+
+void NAV::eraseSD(const __FlashStringHelper *path)
+{
+    mapfile = SD.open(path, FILE_WRITE);
+    mapfile.print("");
+    mapfile.close();
+}
+
+void NAV::test_func()
+{
+    //getClosestPointDst();
+}
+
+void NAV::readBlock(uint32_t block)
+{
+    NAVCore.println("READING BLOCK", block);
+    navmap.current_block = block;
+    mapfile = SD.open(F("/MAP.txt"));
+    uint32_t data_type = 0;
+    uint32_t read_data = 0;
+    uint32_t pos = 0;
+    uint32_t start_position = (block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1;
+    uint32_t target_position = MAP_BLOCK_SIZE * block - 1;
+
+    mapfile.seek(start_position);
+    while (mapfile.available())
+    {
+        int32_t num = mapfile.parseInt();
+        if (data_type == 0)
+            navmap.arrX[read_data] = num;
+        else if (data_type == 1)
+            navmap.arrY[read_data] = num;
+        else if (data_type == 2)
+        {
+            navmap.arrID[read_data] = num;
+            data_type = 0;
+            read_data++;
+            pos = mapfile.position();
+            if (pos == target_position)
+                break;
+            continue;
+        }
+        data_type++;
+    }
+    mapfile.close();
+}
+
+uint32_t NAV::getCurrentBlock()
+{
+    bool xblock_found = false;
+    bool yblock_found = false;
+    uint32_t xblock_idx = 0;
+    uint32_t yblock_idx = 0;
+    uint32_t counter = 1;
+    uint32_t pos_arrXMIN = (navmap.arrX[0] < 0) ? navmap.arrX[0] * -1 : navmap.arrX[0];
+    uint32_t pos_arrXMAX = (navmap.arrX[255] < 0) ? navmap.arrX[255] * -1 : navmap.arrX[255];
+    uint32_t pos_arrYMIN = (navmap.arrY[0] < 0) ? navmap.arrY[0] * -1 : navmap.arrY[0];
+    uint32_t pos_arrYMAX = (navmap.arrY[255] < 0) ? navmap.arrY[255] * -1 : navmap.arrY[255];
+    uint32_t pos_xvector = (vectors.xvector < 0) ? ((uint32_t)(vectors.xvector * 100)) * -1 : (uint32_t)(vectors.xvector * 100);
+    uint32_t pos_yvector = (vectors.yvector < 0) ? ((uint32_t)(vectors.yvector * 100)) * -1 : (uint32_t)(vectors.yvector * 100);
+
+    if (pos_arrXMIN < pos_xvector)
+    {
+        if (pos_arrXMAX > pos_xvector)
+        {
+            if (pos_arrYMIN < pos_yvector)
+            {
+                if (pos_arrYMAX > pos_yvector)
+                {
+                    return navmap.current_block;
+                }
+            }
+        }
+    }
+
+    while (!xblock_found || !yblock_found)
+    {
+        readBlock(counter);
+
+        pos_arrXMIN = (navmap.arrX[0] < 0) ? navmap.arrX[0] * -1 : navmap.arrX[0];
+        pos_arrXMAX = (navmap.arrX[255] < 0) ? navmap.arrX[255] * -1 : navmap.arrX[255];
+        pos_arrYMIN = (navmap.arrY[0] < 0) ? navmap.arrY[0] * -1 : navmap.arrY[0];
+        pos_arrYMAX = (navmap.arrY[255] < 0) ? navmap.arrY[255] * -1 : navmap.arrY[255];
+
+        if (!xblock_found)
+        {
+            if (pos_arrXMIN < pos_xvector)
+            {
+                if (pos_arrXMAX > pos_xvector)
+                {
+                    xblock_idx = navmap.current_block;
+                    for (int i = 0; i < 256; i++)
+                        navmap.xvals[i] = navmap.arrX[i];
+                    xblock_found = true;
+                }
+                else
+                {
+                    counter++;
+                    continue;
+                }
+            }
+            else
+            {
+                if (counter > 1)
+                    counter--;
+                continue;
+            }
+        }
+        else if (!yblock_found)
+        {
+            if (pos_arrYMIN < pos_yvector)
+            {
+                if (pos_arrYMAX > pos_yvector)
+                {
+                    yblock_idx = navmap.current_block;
+                    for (int i = 0; i < 256; i++)
+                        navmap.yvals[i] = navmap.arrY[i];
+                    yblock_found = true;
+                }
+                else
+                {
+                    counter++;
+                    continue;
+                }
+            }
+            else
+            {
+                if (counter > 1)
+                    counter--;
+                continue;
+            }
+        }
+    }
+
+    if (xblock_idx != yblock_idx)
+    {
+        NAVCore.println(F("IL ROBOT SI TROVA IN UNA POSIZIONE NON MAPPATA"));
+        return NOT_FOUND;
+    }
+    else
+    {
+        for (int i = 0; i < 256; i++)
+            navmap.idvals[i] = navmap.arrID[i];
+    }
+
+    return navmap.current_block;
+}
+
+std::tuple<uint32_t, uint32_t, uint32_t> NAV::getClosestPointDst(uint32_t point_type)
+{
+    getCurrentBlock();
+
+    uint32_t pos_xvector = (vectors.xvector < 0) ? ((uint32_t)(vectors.xvector * 100)) * -1 : (uint32_t)(vectors.xvector * 100);
+    uint32_t pos_yvector = (vectors.yvector < 0) ? ((uint32_t)(vectors.yvector * 100)) * -1 : (uint32_t)(vectors.yvector * 100);
+
+    uint32_t dst_to_closest_point = 1000000;
+    uint32_t closest_point_idx = 0;
+    for (int i = 0; i < 256; i++)
+    {
+        int32_t xdiff = 0;
+        int32_t xpoint = navmap.xvals[i];
+        xpoint *= (xpoint < 0) ? -1 : 1;
+        xdiff = pos_xvector - xpoint;
+        xdiff *= (xdiff < 0) ? -1 : 1;
+
+        int32_t ydiff = 0;
+        int32_t ypoint = navmap.yvals[i];
+        ypoint *= (ypoint < 0) ? -1 : 1;
+        ydiff = pos_yvector - ypoint;
+        ydiff *= (ydiff < 0) ? -1 : 1;
+
+        uint32_t real_diff = sqrt(pow(xdiff, 2) + pow(ydiff, 2)); // pitagora
+        if (real_diff < dst_to_closest_point)
+        {
+            dst_to_closest_point = real_diff;
+            closest_point_idx = i;
+        }
+    }
+
+    return std::make_tuple(dst_to_closest_point, navmap.idvals[closest_point_idx], closest_point_idx);
+}
+
+void NAV::mapBorderMode(bool on_off)
+{
+    bordermode = on_off;
+    bordermode_start_time = millis();
+}
+
+std::tuple<int32_t, int32_t> NAV::addToVectors(int32_t val, uint32_t hdg)
+{
+    int32_t xvec = 0;
+    int32_t yvec = 0;
+    if (hdg > 0 && hdg < 9000) // heading positivo per X e Y -- alto destra -- riferimento 0°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        float rad = radians(hdg / 100);
+        xvec += val * sin(rad); // positivo per X
+        yvec += val * cos(rad); // positivo per Y
+    }
+    else if (hdg > 9000 && hdg < 18000) // heading positivo per X, negativo per Y -- basso destra -- riferimento 90°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 90);
+        float rad = radians(hdg / 100);
+        xvec += val * cos(rad); // positivo per X
+        yvec -= val * sin(rad); // negativo per Y
+    }
+    else if (hdg > 18000 && hdg < 27000) // heading negativo per X e Y -- basso sinistra -- riferimento 180°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 180);
+        float rad = radians(hdg / 100);
+        xvec -= val * sin(rad); // negativo per X
+        yvec -= val * cos(rad); // negativo per Y
+    }
+    else // heading positivo per Y, negativo per X -- alto sinistra -- riferimento 270°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 270);
+        float rad = radians(hdg / 100);
+        xvec -= val * cos(rad); // negativo per X
+        yvec += val * sin(rad); // positivo per Y
+    }
+
+    return std::make_tuple((int32_t)((xvec + vectors.xvector) * 100), (int32_t)((yvec + vectors.yvector) * 100));
+}
+
+std::tuple<int32_t, int32_t> NAV::getVectors(int32_t val, uint32_t hdg)
+{
+    int32_t xvec = 0;
+    int32_t yvec = 0;
+    if (hdg > 0 && hdg < 9000) // heading positivo per X e Y -- alto destra -- riferimento 0°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        float rad = radians(hdg / 100);
+        xvec += val * sin(rad); // positivo per X
+        yvec += val * cos(rad); // positivo per Y
+    }
+    else if (hdg > 9000 && hdg < 18000) // heading positivo per X, negativo per Y -- basso destra -- riferimento 90°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 90);
+        float rad = radians(hdg / 100);
+        xvec += val * cos(rad); // positivo per X
+        yvec -= val * sin(rad); // negativo per Y
+    }
+    else if (hdg > 18000 && hdg < 27000) // heading negativo per X e Y -- basso sinistra -- riferimento 180°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 180);
+        float rad = radians(hdg / 100);
+        xvec -= val * sin(rad); // negativo per X
+        yvec -= val * cos(rad); // negativo per Y
+    }
+    else // heading positivo per Y, negativo per X -- alto sinistra -- riferimento 270°
+    {
+        if (going_backwards)
+            hdg = invertHDG(hdg);
+        hdg = convertRelativeHDG(hdg, 270);
+        float rad = radians(hdg / 100);
+        xvec -= val * cos(rad); // negativo per X
+        yvec += val * sin(rad); // positivo per Y
+    }
+
+    return std::make_tuple((int32_t)(xvec * 100), (int32_t)(yvec * 100));
+}
+
+void NAV::sdspeedtest()
+{
+    mapfile = SD.open("/MAP.txt");
+    uint8_t bytes_read = 0;
+    uint8_t data_type = 0;
+    uint8_t n_data_read = 0;
+    char buffer[256];
+    uint32_t start_time = millis();
+    while (mapfile.available())
+    {
+        buffer[bytes_read] = mapfile.read();
+        if (buffer[bytes_read] == ',')
+        {
+            buffer[bytes_read] = '\0';
+            int32_t data;
+            sscanf(buffer, "%d", &data);
+            if (data_type == 0)
+                navmap.arrX[n_data_read] = data;
+            else if (data_type == 1)
+                navmap.arrY[n_data_read] = data;
+            else if (data_type == 2)
+            {
+                navmap.arrID[n_data_read] = data;
+                data_type = 0;
+                n_data_read++;
+                continue;
+            }
+
+            data_type++;
+
+            bytes_read = 0;
+        }
+        else
+            bytes_read++;
+    }
+    mapfile.close();
+    Serial.println("TIME");
+    Serial.println(millis() - start_time);
+}
+
+void NAV::begin()
+{
+    spi = new SPIClass(VSPI);
+    spi->begin(SCLK, MISO, MOSI, CS);
+    if (SD.begin(CS, *spi))
+        NAVCore.println(F("--- Scheda SD OK ---"));
+    else
+        NAVCore.println(F("--- Scheda SD NON RICONOSCIUTA ---"));
+
+    mapfile = SD.open("/MAP.txt");
+    NAVCore.println("POS", mapfile.position());
 }
