@@ -140,6 +140,7 @@ struct Encoder
     float wheel_current_spd = 0;
     float last_wheel_spd = 0;
     float last_traveled_distance = 0;
+    uint32_t last_read_time = 0;
     uint32_t time4 = millis();
 };
 
@@ -258,21 +259,6 @@ void MPU6050StatusFunction(void *param)
     }
 }
 
-uint32_t aagin = 0;
-uint32_t last_aagin = 0;
-uint32_t aagin_diff = 0;
-
-void IRAM_ATTR test()
-{
-    uint32_t this_aagin = millis();
-    if (this_aagin - last_aagin > 6)
-    {
-        aagin++;
-        aagin_diff = this_aagin - last_aagin;
-        last_aagin = this_aagin;
-    }
-}
-
 void Sensors::begin()
 {
     xTaskCreatePinnedToCore(MPU6050StatusFunction, "MPU6050Status", 2000, NULL, 24, &MPU6050Status, 0);
@@ -306,7 +292,6 @@ void Sensors::begin()
         mpu.setDMPEnabled(true);
         attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
         mpuIntStatus = mpu.getIntStatus();
-        sensorcore.println(F("DMP ready! Waiting for first interrupt..."));
         dmpReady = true;
         selftest[1] = true;
         sensorcore.println("DMP OK");
@@ -711,12 +696,16 @@ void Sensors::update()
         {
             int16_t encoder_period = getEncoderPeriod();
 
+            if (millis() - encoder.last_read_time > 250)
+                sensornav.motorStall();
+
             if (encoder_period > 5 && encoder_period < 4500)
             {
+                encoder.last_read_time = millis();
                 uint16_t revolution_time = encoder_period * ENCODER_TEETH;
                 float encoder_current_rps = 1000.00 / (float)revolution_time;
-                encoder.wheel_current_rps = encoder_current_rps * GEAR_RATIO;
-                encoder.wheel_current_spd = encoder.wheel_circumference * encoder.wheel_current_rps; // mm/s
+                //encoder.wheel_current_rps = encoder_current_rps * GEAR_RATIO; (GEAR RATIO 1)
+                encoder.wheel_current_spd = encoder.wheel_circumference * encoder_current_rps; // mm/s
 
                 if (encoder.last_wheel_spd != encoder.wheel_current_spd)
                 {

@@ -74,7 +74,7 @@
 /* #region  Navigation.cpp */
 #define ENABLE_AUTO_NAVIGATION true // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_ENCODER abilitati
 #define ENABLE_ROTATION_SENSING true
-#define ENABLE_ROTATION_LOOP false // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
+#define ENABLE_ROTATION_LOOP true // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
 #define ENABLE_BORDERMODE false
 #define LOG_MAP false
 /* #endregion */
@@ -86,8 +86,11 @@
 #define CHANNEL_MAIN 3
 #define FWD 0
 #define BCK 1
-#define MOT_BASE_VAL 255
-#define MOT_MIN_VAL 150
+#define MOT_MAX_VAL 255
+#define MOT_NORM_VAL 200
+#define MOT_MIN_VAL 100
+#define MOVEMENT_MOT_FREQ 50
+#define MAIN_MOT_FREQ 50
 #define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
 #define GLOBAL_NAV_DELAY 150
 #define FRONT 0
@@ -104,10 +107,11 @@
 #define RUNNING 12
 #define STOP 13
 #define TOGGLE 14
-#define NOT_FOUND 4294967295
+#define NOT_FOUND 2147483646
 #define ACCESSIBLE 0
 #define OBSTACLE 1
 #define BORDER 2
+#define AUTO 2147483647
 /* #endregion */
 
 #define SHOW_MODULE_EXECUTION_TIME false

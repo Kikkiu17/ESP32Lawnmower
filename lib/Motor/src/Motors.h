@@ -15,8 +15,14 @@ class Motors
     public:
         void begin();
         void update();
-        void forward();
-        void backwards();
+        /**
+         * @param heading_to_maintain int32_t - default: AUTO
+         */
+        void forward(int32_t heading_to_maintain = AUTO);
+        /**
+         * @param heading_to_maintain int32_t - default: AUTO
+         */
+        void backwards(int32_t heading_to_maintain = AUTO);
         void right();
         void left();
         /**
@@ -46,12 +52,14 @@ class Motors
         /**
          * @brief Accende / spegne il motore principale
          *
-         * @param speed Velocità (0-255). Default: 170
+         * @param speed Velocità (0-255). Default: 100
          * @param motor_status Forza lo spegnimento o accensione del motore. Può essere: STOP, RUNNING. Default: TOGGLE
          * @return true se il motore è acceso
          * @return false se il motore è spento
          */
-        bool toggleMainMotor(uint8_t spd = 50, uint8_t motor_status = TOGGLE);
+        bool toggleMainMotor(uint8_t spd = 100, uint8_t motor_status = TOGGLE);
+
+        int32_t getHeadingToMaintain();
 
         uint32_t getTime();
 };

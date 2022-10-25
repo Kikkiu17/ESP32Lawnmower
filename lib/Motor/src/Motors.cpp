@@ -15,7 +15,6 @@ Core motorscore;
 NAV motornav;
 Mux motormux;
 uint32_t t1 = 0;
-#define MAIN_MOT_FREQ 100
 
 struct MainMotor
 {
@@ -42,8 +41,8 @@ MainMotor mainmotor;
 const float wheel_circumference = WHEEL_DIAMETER * 3.14;
 const float wheel_encoder_ratio = WHEEL_DIAMETER / ENCODER_DIAMETER;
 
-uint8_t left_spd = 255;
-uint8_t right_spd = 255;
+uint8_t left_spd = MOT_MAX_VAL;
+uint8_t right_spd = MOT_MAX_VAL;
 
 bool robot_moving = false;
 bool move = false;
@@ -55,6 +54,249 @@ bool reverse_heading = false;
 
 uint32_t time_1 = millis();
 uint32_t time_2 = millis();
+uint32_t time_wait = millis();
+
+uint32_t Motors::getTime()
+{
+    return t1;
+}
+
+void Motors::forward(int32_t new_hdg)
+{
+    stop();
+    //motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
+    motorscore.println((char *)"(Motors.cpp) MOTORS FORWARD");
+    motorstatus.setRunning(true);
+
+    if (!maintain_heading)
+    {
+        left_spd = MOT_MAX_VAL;
+        right_spd = MOT_MAX_VAL;
+        digitalWrite(MOTOR_RIGHT_DIR, FWD);
+        digitalWrite(MOTOR_LEFT_DIR, FWD);
+        ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
+        ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
+        if (new_hdg != AUTO)
+            heading_to_maintain = new_hdg;
+        else
+            heading_to_maintain = motorsensor.getHeading();
+        maintain_heading = true;
+        robot_moving = true;
+        reverse_heading = false;
+        motorsensor.setMotorsRotating();
+    }
+
+    direction = 'w';
+    motorsensor.checkMovement('y');
+}
+
+void Motors::backwards(int32_t new_hdg)
+{
+    stop();
+    motorscore.println((char *)"(Motors.cpp) MOTORS BACKWARDS");
+    motorstatus.setRunning(true);
+
+    if (!maintain_heading)
+    {
+        left_spd = MOT_MAX_VAL;
+        right_spd = MOT_MAX_VAL;
+        digitalWrite(MOTOR_RIGHT_DIR, BCK);
+        digitalWrite(MOTOR_LEFT_DIR, BCK);
+        ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
+        ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
+        if (new_hdg != AUTO)
+            heading_to_maintain = new_hdg;
+        else
+            heading_to_maintain = motorsensor.getHeading();
+        maintain_heading = true;
+        robot_moving = true;
+        reverse_heading = true;
+        motorsensor.setMotorsRotating();
+        time_wait = millis();
+    }
+
+    direction = 's';
+    motorsensor.checkMovement('y');
+}
+
+void Motors::right()
+{
+    stop();
+    digitalWrite(MOTOR_RIGHT_DIR, BCK);
+    digitalWrite(MOTOR_LEFT_DIR, FWD);
+    ledcWrite(CHANNEL_RIGHT, MOT_NORM_VAL);
+    ledcWrite(CHANNEL_LEFT, MOT_NORM_VAL);
+    motorstatus.setRunning(true);
+    direction = 'd';
+    robot_moving = true;
+    motorsensor.setMotorsRotating();
+    motorsensor.checkRotation();
+    maintain_heading = false;
+    time_wait = millis();
+}
+
+void Motors::left()
+{
+    stop();
+    digitalWrite(MOTOR_RIGHT_DIR, FWD);
+    digitalWrite(MOTOR_LEFT_DIR, BCK);
+    ledcWrite(CHANNEL_RIGHT, MOT_NORM_VAL);
+    ledcWrite(CHANNEL_LEFT, MOT_NORM_VAL);
+    motorstatus.setRunning(true);
+    direction = 'a';
+    robot_moving = true;
+    motorsensor.checkRotation();
+    motorsensor.setMotorsRotating();
+    maintain_heading = false;
+}
+
+void Motors::stop()
+{
+    motorstatus.setReady(true);
+    ledcWrite(CHANNEL_RIGHT, 0);
+    ledcWrite(CHANNEL_LEFT, 0);
+    direction = 't';
+    robot_moving = false;
+    maintain_heading = false;
+    motorsensor.resetMovementVars();
+    motorsensor.setMotorsStop();
+}
+
+char Motors::getDirection()
+{
+    return direction;
+}
+
+void Motors::maintainHeading()
+{
+    // DESTRA: DIFF NEGATIVO; SINISTRA: DIFF POSITIVO
+
+    int32_t current_heading = motorsensor.getHeading();
+    int32_t diff = heading_to_maintain - current_heading;
+
+    if (reverse_heading)
+        diff *= -1; // inverte destra e sinistra se il robot sta andando indietro
+
+    if (diff < 0)
+    {
+        // DESTRA
+
+        diff *= -1;
+
+        /*
+        decadimento esponenziale
+        funzione: 𝑦=𝑐+𝑎(1−𝑏)^𝑥
+        dove:
+        y = motor_value
+        c = valore minimo motore (150, MOT_MIN_VAL)
+        a = valore massimo motore (200 - 150 = 105; MOT_MAX_VAL - MOT_MIN_VAL = c)
+        b = costante (rateo del decay, 0.642223)
+        x = diff (floatdiff)
+        */
+
+        float floatdiff = (float)diff / 100;
+        uint8_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
+        //if (motor_value > MOT_MIN_VAL)
+        //{
+            left_spd = motor_value;
+            right_spd = MOT_MAX_VAL;
+        //}
+    }
+    else
+    {
+        // SINISTRA
+
+        float floatdiff = (float)diff / 100;
+        uint8_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
+        //if (motor_value > MOT_MIN_VAL)
+        //{
+            right_spd = motor_value;
+            left_spd = MOT_MAX_VAL;
+        //}
+    }
+
+
+    ledcWrite(CHANNEL_RIGHT, right_spd);
+    ledcWrite(CHANNEL_LEFT, left_spd);
+}
+
+void Motors::setSpeed(uint8_t spd, uint8_t motor)
+{
+    if (motor == RIGHT)
+        right_spd = spd;
+    else if (motor == LEFT)
+        left_spd = spd;
+    else if (motor == BOTH)
+    {
+        right_spd = spd;
+        left_spd = spd;
+    }
+    else if (motor == MAIN)
+    {
+        if (spd > 20)
+        {
+            for (int i = 20; i < spd; i++)
+            {
+                delay(25);
+                ledcWrite(CHANNEL_MAIN, i);
+            }
+        }
+        else
+            ledcWrite(CHANNEL_MAIN, spd);
+
+        return;
+    }
+
+    ledcWrite(CHANNEL_RIGHT, right_spd);
+    ledcWrite(CHANNEL_LEFT, left_spd);
+}
+
+void Motors::playStartSound()
+{
+    mainmotor.playsound.active = true;
+}
+
+bool Motors::toggleMainMotor(uint8_t spd, uint8_t stat)
+{
+    if (stat == TOGGLE)
+    {
+        if (mainmotor.active == false)
+        {
+            mainmotor.active = true;
+            mainmotor.startup.active = true;
+            mainmotor.startup.speed_target = spd;
+            motorstatus.mainMotorStarting();
+        }
+        else
+        {
+            mainmotor.active = false;
+            mainmotor.startup.active = false;
+            mainmotor.startup.speed = 0;
+            ledcWrite(CHANNEL_MAIN, 0);
+        }
+    }
+    else if (stat == RUNNING)
+    {
+        mainmotor.active = true;
+        mainmotor.startup.active = true;
+        mainmotor.startup.speed_target = spd;
+        motorstatus.mainMotorStarting();
+    }
+    else
+    {
+        mainmotor.active = false;
+        mainmotor.startup.active = false;
+        mainmotor.startup.speed = 0;
+        ledcWrite(CHANNEL_MAIN, 0);
+    }
+    
+    return mainmotor.active;
+}
+
+int32_t Motors::getHeadingToMaintain()
+{
+    return heading_to_maintain;
+}
 
 void Motors::begin()
 {
@@ -62,8 +304,8 @@ void Motors::begin()
     pinMode(MOTOR_RIGHT_DIR, OUTPUT);
     ledcAttachPin(MOT_R_SPD, CHANNEL_RIGHT);
     ledcAttachPin(MOT_L_SPD, CHANNEL_LEFT);
-    ledcSetup(CHANNEL_RIGHT, 100, 8);
-    ledcSetup(CHANNEL_LEFT, 100, 8);
+    ledcSetup(CHANNEL_RIGHT, MOVEMENT_MOT_FREQ, 8);
+    ledcSetup(CHANNEL_LEFT, MOVEMENT_MOT_FREQ, 8);
     pinMode(23, INPUT);
     pinMode(MOT_MAIN, OUTPUT);
     ledcAttachPin(MOT_MAIN, CHANNEL_MAIN);
@@ -78,12 +320,15 @@ void Motors::update()
     {
         if (maintain_heading)
         {
-            time_2 = millis();
-
-            if (time_2 - time_1 > 150)
+            if (millis() - time_wait > 500)
             {
-                time_1 = millis();
-                maintainHeading();
+                time_2 = millis();
+
+                if (time_2 - time_1 > 150)
+                {
+                    time_1 = millis();
+                    maintainHeading();
+                }
             }
         }
     }
@@ -188,310 +433,3 @@ void Motors::update()
 
     t1 = micros() - start_time;
 }
-
-uint32_t Motors::getTime()
-{
-    return t1;
-}
-
-void Motors::forward()
-{
-    stop();
-    //motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
-    motorscore.println((char *)"(Motors.cpp) MOTORS FORWARD");
-    motorstatus.setRunning(true);
-
-    if (!maintain_heading)
-    {
-        left_spd = 255;
-        right_spd = 255;
-        digitalWrite(MOTOR_RIGHT_DIR, FWD);
-        digitalWrite(MOTOR_LEFT_DIR, FWD);
-        ledcWrite(CHANNEL_RIGHT, 255);
-        ledcWrite(CHANNEL_LEFT, 255);
-        heading_to_maintain = motorsensor.getHeading();
-        maintain_heading = true;
-        robot_moving = true;
-        reverse_heading = false;
-        motorsensor.setMotorsRotating();
-    }
-
-    direction = 'w';
-    motorsensor.checkMovement('y');
-}
-
-void Motors::backwards()
-{
-    stop();
-    motorscore.println((char *)"(Motors.cpp) MOTORS BACKWARDS");
-    motorstatus.setRunning(true);
-
-    if (!maintain_heading)
-    {
-        left_spd = 255;
-        right_spd = 255;
-        digitalWrite(MOTOR_RIGHT_DIR, BCK);
-        digitalWrite(MOTOR_LEFT_DIR, BCK);
-        ledcWrite(CHANNEL_RIGHT, 255);
-        ledcWrite(CHANNEL_LEFT, 255);
-        heading_to_maintain = motorsensor.getHeading();
-        maintain_heading = true;
-        robot_moving = true;
-        reverse_heading = true;
-        motorsensor.setMotorsRotating();
-    }
-
-    direction = 's';
-    motorsensor.checkMovement('y');
-}
-
-void Motors::right()
-{
-    stop();
-    digitalWrite(MOTOR_RIGHT_DIR, BCK);
-    digitalWrite(MOTOR_LEFT_DIR, FWD);
-    ledcWrite(CHANNEL_RIGHT, 255);
-    ledcWrite(CHANNEL_LEFT, 255);
-    motorstatus.setRunning(true);
-    direction = 'd';
-    robot_moving = true;
-    motorsensor.setMotorsRotating();
-    motorsensor.checkRotation();
-    maintain_heading = false;
-}
-
-void Motors::left()
-{
-    stop();
-    digitalWrite(MOTOR_RIGHT_DIR, FWD);
-    digitalWrite(MOTOR_LEFT_DIR, BCK);
-    ledcWrite(CHANNEL_RIGHT, 255);
-    ledcWrite(CHANNEL_LEFT, 255);
-    motorstatus.setRunning(true);
-    direction = 'a';
-    robot_moving = true;
-    motorsensor.checkRotation();
-    motorsensor.setMotorsRotating();
-    maintain_heading = false;
-}
-
-void Motors::stop()
-{
-    motorstatus.setReady(true);
-    ledcWrite(CHANNEL_RIGHT, 0);
-    ledcWrite(CHANNEL_LEFT, 0);
-    direction = 't';
-    robot_moving = false;
-    maintain_heading = false;
-    motorsensor.resetMovementVars();
-    motorsensor.setMotorsStop();
-}
-
-char Motors::getDirection()
-{
-    return direction;
-}
-
-void Motors::maintainHeading()
-{
-    // DESTRA: DIFF NEGATIVO; SINISTRA: DIFF POSITIVO
-
-    int32_t current_heading = motorsensor.getHeading();
-    int32_t diff = heading_to_maintain - current_heading;
-
-    if (reverse_heading)
-        diff *= -1; // inverte destra e sinistra se il robot sta andando indietro
-
-    if (diff < 0)
-    {
-        // DESTRA
-
-        diff *= -1;
-
-        /*
-        decadimento esponenziale
-        funzione: 𝑦=𝑐+𝑎(1−𝑏)^𝑥
-        dove:
-        y = motor_value
-        c = valore minimo motore (150, MOT_MIN_VAL)
-        a = valore massimo motore (255 - 150 = 105; MOT_BASE_VAL - MOT_MIN_VAL = c)
-        b = costante (rateo del decay, 0.642223)
-        x = diff (floatdiff)
-        */
-
-        float floatdiff = (float)diff / 100;
-        uint8_t motor_value = MOT_MIN_VAL + ((MOT_BASE_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
-        if (motor_value > MOT_MIN_VAL)
-        {
-            left_spd = motor_value;
-            right_spd = 255;
-        }
-    }
-    else
-    {
-        // SINISTRA
-
-        float floatdiff = (float)diff / 100;
-        uint8_t motor_value = MOT_MIN_VAL + ((MOT_BASE_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
-        if (motor_value > MOT_MIN_VAL)
-        {
-            right_spd = motor_value;
-            left_spd = 255;
-        }
-    }
-
-    ledcWrite(CHANNEL_RIGHT, right_spd);
-    ledcWrite(CHANNEL_LEFT, left_spd);
-}
-
-void Motors::setSpeed(uint8_t spd, uint8_t motor)
-{
-    if (motor == RIGHT)
-        right_spd = spd;
-    else if (motor == LEFT)
-        left_spd = spd;
-    else if (motor == BOTH)
-    {
-        right_spd = spd;
-        left_spd = spd;
-    }
-    else if (motor == MAIN)
-    {
-        if (spd > 20)
-        {
-            for (int i = 20; i < spd; i++)
-            {
-                delay(25);
-                ledcWrite(CHANNEL_MAIN, i);
-            }
-        }
-        else
-            ledcWrite(CHANNEL_MAIN, spd);
-
-        return;
-    }
-
-    ledcWrite(CHANNEL_RIGHT, right_spd);
-    ledcWrite(CHANNEL_LEFT, left_spd);
-}
-
-void Motors::playStartSound()
-{
-    mainmotor.playsound.active = true;
-}
-
-bool Motors::toggleMainMotor(uint8_t spd, uint8_t stat)
-{
-    if (stat == TOGGLE)
-    {
-        if (mainmotor.active == false)
-        {
-            mainmotor.active = true;
-            mainmotor.startup.active = true;
-            mainmotor.startup.speed_target = spd;
-            motorstatus.mainMotorStarting();
-        }
-        else
-        {
-            mainmotor.active = false;
-            mainmotor.startup.active = false;
-            mainmotor.startup.speed = 0;
-            ledcWrite(CHANNEL_MAIN, 0);
-        }
-    }
-    else if (stat == RUNNING)
-    {
-        mainmotor.active = true;
-        mainmotor.startup.active = true;
-        mainmotor.startup.speed_target = spd;
-        motorstatus.mainMotorStarting();
-    }
-    else
-    {
-        mainmotor.active = false;
-        mainmotor.startup.active = false;
-        mainmotor.startup.speed = 0;
-        ledcWrite(CHANNEL_MAIN, 0);
-    }
-    
-    return mainmotor.active;
-}
-
-// FORWARD PER CONTROLLO VELOCITA' IN MM/S
-/*
-void Motors::forward(float desired_rps)
-{
-    if (robot_not_moving < 10)
-    {
-        move = true;
-        motorstatus.setRunning(true);
-        ledcWrite(0, MOTOR_VALUE);
-
-        int period = motorsensor.getEncoderPeriod();
-        if (period != -1 && period > 10)
-        {
-            int revolution_time = period * ENCODER_TEETH;
-            float encoder_current_rps = 1000.00 / (float)revolution_time;
-            float wheel_current_rps = encoder_current_rps / 5;
-
-            wheel_spd = wheel_circumference * wheel_current_rps;
-
-            float rps_difference = encoder_current_rps - desired_rps;
-            int value_to_apply = rps_difference * STEPS_MULTIPLIER * -1;
-
-            if (value_to_apply > 0 && value_to_apply < 1)
-            {
-                value_to_apply = 1;
-            }
-            else if (value_to_apply < 0 && value_to_apply > -1)
-            {
-                value_to_apply = -1;
-            }
-
-            if (MOTOR_VALUE + value_to_apply > MIN_MOTOR_VALUE && MOTOR_VALUE + value_to_apply < 256)
-            {
-                // ci dovrebbe essere accelerazione quindi controlla se c'è effettivamente
-                int accX = motorsensor.getAccY();
-                if (accX > ACCELERATION_ACTIVATION || accX < -ACCELERATION_ACTIVATION)
-                {
-                    // il robot sa che sta accelerando
-                    robot_moving = true;
-                    robot_not_moving = 0;
-                }
-                else
-                {
-                    // se non percepisce accelerazione, controlla se il robot ha già accelerato, quindi si sta muovendo
-                    if(robot_moving == false)
-                    {
-                        robot_not_moving++;
-                    }
-                }
-                MOTOR_VALUE += value_to_apply;
-            }
-
-            #ifdef ENABLE_LOGGING
-            SBT.print("  MOTOR_CURRENT_VALUE: ");
-            SBT.print(MOTOR_VALUE);
-            SBT.print("  PERIOD: ");
-            SBT.print(period);
-            SBT.print("  VALUE_TO_APPLY: ");
-            SBT.print(value_to_apply);
-            SBT.print("  CURRENT_RPS: ");
-            SBT.print(encoder_current_rps);
-            SBT.print("  WHEEL_RPS: ");
-            SBT.print(wheel_current_rps);
-            SBT.print("  WHEEL_SPD: ");
-            SBT.println(wheel_spd);
-            #endif
-        }
-    }
-    else
-    {
-        // se il counter è troppo alto vuol dire effettivamente che il robot è fermo,
-        // quindi ferma i motori
-        // TODO: provare ad andare avanti e indietro, destra e sinistra per riuscire a muoversi
-        motorstatus.setError(true);
-        stop();
-    }
-}
-*/

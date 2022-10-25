@@ -34,7 +34,6 @@ class Sensors
         void checkFrontObstacle(uint8_t request_type = DEFAULT);
         int getFWDInfrared();
 
-        void getAccelErrors();
         float getUltrasonicDistance();
         void setMotorsRotating();
         void setMotorsStop();
@@ -52,8 +51,6 @@ class Sensors
         uint32_t getTime();
         uint16_t getBatADC();
         struct SelfTest* getSelfTestResults();
-        void setMPUBusy();
-        void setMPUReady();
 
     private:
         /**
@@ -65,6 +62,7 @@ class Sensors
         int getLeftInfrared();
         void getValues();
         void getFrontUSObstacle(uint8_t request_type = DEFAULT);
+        void getAccelErrors();
 };
 
 #endif

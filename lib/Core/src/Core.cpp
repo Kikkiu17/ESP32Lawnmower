@@ -29,11 +29,15 @@ void Core::begin()
     motors.begin();
     sensors.begin();
     status.setReady(true);
+    println("Free heap before nav", ESP.getFreeHeap());
+    println("Max allocable heap block before nav", ESP.getMaxAllocHeap());
     navigation.begin();
     mux.begin();
 
     status.setReady(true);
     motors.setSpeed(0, MAIN);
+    println("Free heap", ESP.getFreeHeap());
+    println("Max allocable heap block", ESP.getMaxAllocHeap());
     //ptr = mux.getPacketPointer();
 }
 
@@ -67,7 +71,7 @@ void Core::loop()
         }
         else if (BTData == 'i')
         {
-            //navigation.initSD();
+            navigation.scroll();
         }
         else if (BTData == 'r')
         {
@@ -77,7 +81,7 @@ void Core::loop()
         }
         else if (BTData == 'o')
         {
-            navigation.test_func();
+            
         }
         else if (BTData == 'c')
         {
@@ -119,7 +123,7 @@ void Core::loop()
             }
             if (erase_map_confirmation)
             {
-                navigation.eraseSD(F("/MAP.txt"));
+                navigation.eraseSD("/MAP.txt");
                 println(F("MAP ERASED"));
                 erase_map_confirmation = false;
             }

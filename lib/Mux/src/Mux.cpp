@@ -54,7 +54,7 @@ uint8_t sensor = 0;
 // array:
 // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
 uint64_t mux_data[9] = {};
-uint64_t* mux_data_ptr = mux_data;
+uint64_t *mux_data_ptr = mux_data;
 uint8_t mux_data_idx = 0;
 uint8_t mux_ch = 0;
 
@@ -478,12 +478,10 @@ void Mux::begin()
     xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 1024, NULL, 2, &ReadAnalogHandle, 0);
     xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 1024, NULL, 10, &TaskManagerHandle, 0);
 
-    muxcore.println("PulseIn heap", uxTaskGetStackHighWaterMark(PulseInHandle));
+    /*muxcore.println("PulseIn heap", uxTaskGetStackHighWaterMark(PulseInHandle));
     muxcore.println("ReadDigital heap", uxTaskGetStackHighWaterMark(ReadDigitalHandle));
     muxcore.println("ReadAnalog heap", uxTaskGetStackHighWaterMark(ReadAnalogHandle));
-    muxcore.println("TaskManager heap", uxTaskGetStackHighWaterMark(TaskManagerHandle));
-    muxcore.println("Free heap", ESP.getFreeHeap());
-    muxcore.println("Max allocable heap block", ESP.getMaxAllocHeap());
+    muxcore.println("TaskManager heap", uxTaskGetStackHighWaterMark(TaskManagerHandle));*/
 }
 
 void Mux::loop()
