@@ -121,6 +121,8 @@ class NAV
         // mette in moto le ruote del robot (avanti) se si stava muovendo
         void resume();
 
+        void mapLogging(bool);
+
     private:
         // Inutilizzato
         void checkDirectionsDeg();
@@ -265,6 +267,14 @@ class NAV
         uint32_t joinMapBlocks();
 
         int32_t convertCharArrToInt(std::array<char, 256>);
+
+        bool checkMapCompletion();
+
+        /**
+         * Inverte l'heading in formato 180. Es: 135° -> 45°; 45° -> 135°
+         * Restituisce sempre valori positivi
+         */
+        uint32_t invert180HDG(int32_t heading);
 };
 
 #endif

@@ -19,7 +19,7 @@
 #define MUX2 0
 #define MUX3 2
 #define INTERRUPT_PIN 34
-// #define MUX_ENABLE 17 NC in PCB
+// #define MUX_ENABLE 17 - NC in PCB
 /* #endregion */
 
 /* #region  Canali MUX */
@@ -73,9 +73,9 @@
 
 /* #region  Navigation.cpp */
 #define ENABLE_AUTO_NAVIGATION true // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_ENCODER abilitati
-#define ENABLE_ROTATION_SENSING true
+#define ENABLE_ROTATION_SENSING true // ferma il robot quando l'heading target viene raggiunto
 #define ENABLE_ROTATION_LOOP true // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
-#define ENABLE_BORDERMODE false
+#define LOG_OBSTACLES_TO_MAP false
 #define LOG_MAP false
 /* #endregion */
 
@@ -108,11 +108,16 @@
 #define STOP 13
 #define TOGGLE 14
 #define NOT_FOUND 2147483646
+// mappa
 #define ACCESSIBLE 0
+// mappa
 #define OBSTACLE 1
+// mappa
 #define BORDER 2
 #define AUTO 2147483647
 /* #endregion */
 
 #define SHOW_MODULE_EXECUTION_TIME false
 #define ENABLE_LOGGING // commentare per disabilitare il logging delle informazioni nella porta seriale
+
+// per aumentare stack size loopTask (ora a 12288) vedere \.platformio\packages\framework-arduinoespressif32\tools\sdk\include\config\sdkconfig.h

@@ -22,6 +22,7 @@ uint64_t *ptr;
 bool rst_confirmation = false;
 bool erase_map_confirmation = false;
 bool core_bordermode = false;
+bool stop_logging = false;
 
 void Core::begin()
 {
@@ -141,13 +142,30 @@ void Core::loop()
                 erase_map_confirmation = false;
             }
         }
+        else if (BTData == 'l' || BTData == 'L')
+        {
+            if (!stop_logging)
+            {
+                println("Logging data to map DISABLED");
+                navigation.mapLogging(false);
+                stop_logging = true;
+            }
+            else
+            {
+                println("Logging data to map ENABLED");
+                stop_logging = false;
+                navigation.mapLogging(true);
+            }
+        }
         else if (BTData == 'h' || BTData == 'H')
         {
+            println("");
             println("LISTA COMANDI");
             println("w - a - s - d: movimento robot");
             println("b: mostra stato batteria");
             println("c: calibrazione accelerometro/giroscopio");
             println("i - o - p: funzioni temporanee");
+            println("l(L) - attiva o disattiva logging nel file mappa");
             println("m(M): accende e spegne motore principale");
             println("p: reset mappa");
             println("r: core_bordermode on/off");
