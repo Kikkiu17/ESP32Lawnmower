@@ -11,18 +11,18 @@
 #include <WebSerial.h>
 #endif
 
-#include <MPU6050_light.h>
+#include "MPU6050.h"
 
 // classi librerie
 Motors sensormotors;
 Status sensorstatus;
+MPU6050 mpu;
 Core sensorcore;
 NAV sensornav;
 BluetoothSerial sensorserial;
 Mux sensormux;
 uint64_t t2 = 0;
 TaskHandle_t MPU6050Status;
-MPU6050 mpu(Wire);
 
 #define OUTPUT_READABLE_YAWPITCHROLL
 #define OUTPUT_READABLE_REALACCEL
@@ -99,13 +99,34 @@ int32_t minZ = 0;
 uint8_t stop_sensor_direction = FRONT;
 uint8_t stop_sensor_type = INFRARED;
 
-bool mpu_calibrated = false;
-bool selftest[3] = {false};
+// MPU control/status vars
+bool dmpReady = false;  // set true if DMP init was successful
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
 
-struct MPUData
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 gy;         // [x, y, z]            gyro sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+
+// packet structure for InvenSense teapot demo
+uint8_t teapotPacket[14] = { '$', 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, '\r', '\n' };
+
+volatile bool mpuInterrupt = false; // indicates whether MPU interrupt pin has gone high
+void IRAM_ATTR dmpDataReady()
 {
-    float AccErrorX, AccErrorY, GyroErrorX, GyroErrorY, GyroErrorZ, AccY, AccX, AccZ, GyroX, GyroY, GyroZ, accAngleX, accAngleY, gyroAngleX, gyroAngleY;
-};
+    mpuInterrupt = true;
+}
+
+bool selftest[3] = {false};
 
 struct Encoder
 {
@@ -174,48 +195,65 @@ struct SensorPacket
 Encoder encoder;
 SetZero setzero;
 SensorPacket senspacket;
-MPUData mpudata;
 
 void MPU6050StatusFunction(void *param)
 {
     BluetoothSerial taskserial;
+    taskserial.print("Waiting for MPU6050");
+    Serial.print("Waiting for MPU6050");
     uint8_t time_passed = 0;
     bool once_mpu = false;
     for (;;)
     {
         if (!mpu_ready)
         {
-            if (time_passed > 10) // 5 secondi
+            if (time_passed > 20) // 10 secondi
             {
-                taskserial.println(" FAIL");
-                Serial.println(" FAIL");
+                taskserial.println("MPU is unresponsive");
+                Serial.println("MPU is unresponsive");
                 vTaskDelete(NULL);
             }
             delay(500);
+            taskserial.print(".");
+            Serial.print(".");
             time_passed++;
         }
         else
         {
             if (!once_mpu)
             {
+                taskserial.println();
+                taskserial.println("MPU6050 READY");
+                taskserial.print("Waiting for DMP");
+                Serial.println();
+                Serial.println("MPU6050 READY");
+                Serial.print("Waiting for DMP");
                 once_mpu = true;
                 time_passed = 0;
             }
             else
             {
-                if (!mpu_calibrated)
+                if (!dmpReady)
                 {
                     if (time_passed > 20) // 10 secondi
                     {
-                        taskserial.println(" FAIL");
-                        Serial.println(" FAIL");
+                        taskserial.println("DMP is unresponsive");
+                        Serial.println("DMP is unresponsive");
                         vTaskDelete(NULL);
                     }
                     delay(500);
+                    taskserial.print(".");
+                    Serial.print(".");
                     time_passed++;
                 }
                 else
+                {
+                    taskserial.println();
+                    taskserial.println("DMP READY");
+                    Serial.println();
+                    Serial.println("DMP READY");
                     vTaskDelete(NULL);
+                }
             }
         }
     }
@@ -223,28 +261,61 @@ void MPU6050StatusFunction(void *param)
 
 void Sensors::begin()
 {
+    sensorcore.println("SELF TEST SENSORI");
     xTaskCreatePinnedToCore(MPU6050StatusFunction, "MPU6050Status", 2000, NULL, 24, &MPU6050Status, 0);
-
-    Wire.begin();
+    /* #region  Inizializzazione MPU6050 */
+    Wire.begin(21, 22);
     Wire.setClock(400000);
-    sensorcore.print(F("(Sensors) Initializing MPU6050"));
-    if (mpu.begin() == 0)
+    mpu.initialize();
+    pinMode(INTERRUPT_PIN, INPUT);
+    if (mpu.testConnection())
     {
+        selftest[0] = true;
         mpu_ready = true;
-        sensorcore.print(F(" OK"));
-        Serial.println();
-        sensorserial.println();
-        sensorcore.print(F("(Sensors) Calibrating accelerometer / gyro"));
-        mpu.calcOffsets(true,true);
-        sensorserial.println();
-        mpu_calibrated = true;
-        sensorcore.print(F(" OK"));
-        Serial.println();
-        sensorserial.println();
-        pinMode(INTERRUPT_PIN, INPUT);
-        pinMode(RPM_SENS, INPUT_PULLDOWN);
-        sensor_packetptr = sensormux.getPacketPointer();
     }
+    sensorcore.println(F("Initializing DMP..."));
+    devStatus = mpu.dmpInitialize();
+
+    mpu.setXGyroOffset(82);
+    mpu.setYGyroOffset(-52);
+    mpu.setZGyroOffset(-29);
+    mpu.setXAccelOffset(-2570);
+    mpu.setYAccelOffset(-221);
+    mpu.setZAccelOffset(1408);
+
+    if (devStatus == 0)
+    {
+        mpu.CalibrateAccel(6);
+        mpu.CalibrateGyro(6);
+        mpu.PrintActiveOffsets();
+        sensorcore.println(F("Enabling DMP..."));
+        mpu.setDMPEnabled(true);
+        attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+        mpuIntStatus = mpu.getIntStatus();
+        dmpReady = true;
+        selftest[1] = true;
+        sensorcore.println("DMP OK");
+        packetSize = mpu.dmpGetFIFOPacketSize();
+    }
+    else
+    {
+        sensorcore.print(F("DMP Initialization failed - code"), devStatus);
+        sensorcore.println("MPU FAIL");
+    }
+    /* #endregion */
+
+    pinMode(RPM_SENS, INPUT_PULLDOWN);
+    pinMode(BAT, INPUT);
+
+    sensor_packetptr = sensormux.getPacketPointer();
+
+    //if (getBatADC() > 0)
+    //{
+    //    selftest[2] = true;
+    //    sensorcore.println("BAT OK");
+        //if (getBatADC() < 2740)
+        //    sensorcore.lowBat();
+    //}
 }
 
 int Sensors::getFWDInfrared()
@@ -258,8 +329,6 @@ uint32_t TEMP_TIME = 0;
 void Sensors::update()
 {
     uint32_t start_time = micros();
-
-    mpu.update();
 
     if (millis() - TEMP_TIME > 30)
     {
@@ -283,7 +352,7 @@ void Sensors::update()
                 senspacket.bat.n_values++;
                 if (senspacket.bat.n_values == 20)
                 {
-                    if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700) // sotto circa 12V
+                    if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700)
                         sensorcore.lowBat();
                     senspacket.bat.total = 0;
                     senspacket.bat.n_values = 0;
@@ -609,7 +678,6 @@ void Sensors::update()
             {
                 if (!senspacket.info.is_polling)
                 {
-                    sensorserial.println("STARTING POLLING");
                     senspacket.info.is_polling = true;
                     sensormux.sensPacketUpdate(true);
                 }
@@ -769,12 +837,23 @@ void Sensors::setZero()
 
 void Sensors::getValues()
 {
-    yaw = mpu.getAngleZ();
-    pitch = mpu.getAngleY();
-    roll = mpu.getAngleX();
-    accX = mpu.getAccX();
-    accY = mpu.getAccY();
-    accZ = mpu.getAccZ();
+    if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer))
+    {
+        mpu.dmpGetQuaternion(&q, fifoBuffer);
+        mpu.dmpGetGravity(&gravity, &q);
+        mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        yaw = ypr[0] * 180 / PI;
+        pitch = ypr[1] * 180 / PI;
+        roll = ypr[2] * 180 / PI;
+
+        mpu.dmpGetQuaternion(&q, fifoBuffer);
+        mpu.dmpGetAccel(&aa, fifoBuffer);
+        mpu.dmpGetGravity(&gravity, &q);
+        mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+        accX = aaReal.x;
+        accY = aaReal.y;
+        accZ = aaReal.z;
+    }
 }
 
 int Sensors::getAccX()
@@ -810,7 +889,7 @@ int Sensors::getAccY()
 int Sensors::getAccZ()
 {
     getValues();
-    int accel = accZ;
+    int accel = aaReal.z;
     if (accel > maxZ || accel < minZ)
     {
         accel += zeroZ;

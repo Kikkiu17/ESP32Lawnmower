@@ -45,7 +45,7 @@
 #define INVERT_ACC_X false
 #define INVERT_ACC_Y false
 #define INVERT_ACC_Z false
-#define INVERT_YAW false
+#define INVERT_YAW true
 #define INVERT_PITCH false
 #define INVERT_ROLL false
 /* #endregion */
@@ -90,7 +90,7 @@
 #define MOT_NORM_VAL 200
 #define MOT_MIN_VAL 100
 #define MOVEMENT_MOT_FREQ 50
-#define MAIN_MOT_FREQ 50
+#define MAIN_MOT_FREQ 150
 #define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
 #define GLOBAL_NAV_DELAY 150
 #define FRONT 0
@@ -108,6 +108,7 @@
 #define STOP 13
 #define TOGGLE 14
 #define NOT_FOUND 2147483646
+#define MAX_CM 4294967294
 // mappa
 #define ACCESSIBLE 0
 // mappa

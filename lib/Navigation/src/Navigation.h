@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <SETTINGS.h>
 #include <tuple>
+#include <vector>
 
 #define X 0
 #define Y 1
@@ -23,14 +24,14 @@ class NAV
          * @param centimeters Distanza da percorrere
          * @param heading_to_maintain int32_t - default: AUTO
          */
-        void goForward(uint32_t centimeters = 4294967295, int32_t heading_to_maintain = AUTO);
+        void goForward(uint32_t centimeters = MAX_CM, int32_t heading_to_maintain = AUTO);
         /**
          * Va indietro per la distanza specificata
          *
          * @param centimeters Distanza da percorrere
          * @param heading_to_maintain int32_t - default: AUTO
          */
-        void goBackwards(uint32_t centimeters = 4294967295, int32_t heading_to_maintain = AUTO);
+        void goBackwards(uint32_t centimeters = MAX_CM, int32_t heading_to_maintain = AUTO);
         /**
          * @brief Imposta la flag "obstacle_detected" (solo se il robot si stava muovendo)
          *
@@ -94,7 +95,7 @@ class NAV
         void mapBorderMode(bool on_off = false);
         void sdspeedtest();
         void eraseSD(const char *path);
-        // blocco minimo: 1
+        // blocco iniziale: 1
         void readBlock(uint32_t block);
 
         uint32_t abs(uint32_t val)
@@ -176,7 +177,7 @@ class NAV
          * @param heading angolo vettore formato 360°
          * @return std::tuple<int32_t, int32_t> - primo valore: vettore X; secondo valore: vettore Y
          */
-        std::tuple<int32_t, int32_t> getVectors(int32_t value_to_add, uint32_t heading);
+        std::tuple<int32_t, int32_t> getVectors(int32_t vector_module, uint32_t vector_direction);
 
         int countDigits(int number)
         {
@@ -204,33 +205,33 @@ class NAV
         uint32_t getLastBlock(bool fill_empty_block_space = false);
 
         /**
-         * Ottiene il punto positivo più alto
+         * Ottiene il punto con valore X o Y più alto
          * 
          * @param axis X o Y
-         * @return std::tuple<uint32_t, uint32_t> - idx blocco, idx punto, valore punto
+         * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
         std::tuple<uint32_t, uint32_t, int32_t> getTopPoint(uint8_t axis);
         /**
-         * Ottiene il punto negativo (e non) più basso
+         * Ottiene il punto con valore X o Y più basso
          *
          * @param axis X o Y
-         * @return std::tuple<uint32_t, uint32_t> - idx blocco, idx punto, valore punto
+         * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
         std::tuple<uint32_t, uint32_t, int32_t> getBottomPoint(uint8_t axis = X);
         /**
-         * Ottiene il punto positivo più alto nel blocco specificato
+         * Ottiene il punto con valore X o Y più alto nel blocco specificato
          *
          * @param block
          * @param axis X o Y
-         * @return std::tuple<uint32_t, uint32_t> - idx blocco, idx punto, valore punto
+         * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
         std::tuple<uint32_t, uint32_t, int32_t> getTopPointOf(uint32_t block, uint8_t axis);
         /**
-         * Ottiene il punto positivo più basso nel blocco specificato
+         * Ottiene il punto con valore X o Y più basso nel blocco specificato
          *
          * @param block
          * @param axis X o Y
-         * @return std::tuple<uint32_t, uint32_t> - idx blocco, idx punto, valore punto
+         * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
         std::tuple<uint32_t, uint32_t, int32_t> getBottomPointOf(uint32_t block, uint8_t axis);
 
@@ -275,6 +276,11 @@ class NAV
          * Restituisce sempre valori positivi
          */
         uint32_t invert180HDG(int32_t heading);
+
+        uint32_t getMeanDiff(uint32_t block, uint8_t axis);
+
+        void addToCommandQueue(uint8_t cmd, std::vector<int32_t> data, bool push_forward = false);
+        void addToCommandQueue(std::vector<uint8_t> cmds, std::vector<int32_t> data, bool push_forward = false);
 };
 
 #endif

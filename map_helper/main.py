@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 collection = ""
 with open(
-    r"C:\Users\Kikkiu\Documents\PlatformIO\Projects\ESP32Lawnmower\map_helper\MAP.txt") as f:
+    r"D:\PlatformIO\Projects\ESP32Lawnmower\map_helper\MAP.txt") as f:
     collection = f.read()
 
 commas = 0

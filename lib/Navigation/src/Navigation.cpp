@@ -22,6 +22,13 @@
 #define UP 0
 #define DOWN 1
 
+#define GOFORWARD 1         // --- 2 argomenti ---
+#define GOBACKWARDS 2       // --- 2 argomenti ---
+#define ROTATETO 3          // --- 2 argomenti ---
+#define ROTATEFOR 4         // --- 1 argomento ---
+#define GOTOPOINT 5         // --- 2 argomenti - AGGIUNGE DUE COMANDI ALLA CODA ---
+#define SETHDGTOPOINT 6     // --- 2 argomenti ---
+
 SPIClass *spi = NULL;
 File mapfile;
 
@@ -67,6 +74,13 @@ uint8_t obstacle_sensor_type = INFRARED;
 bool bordermode = false;
 uint32_t bordermode_start_time = 0;
 
+struct CommandQueue
+{
+    bool busy = false;
+    std::vector<uint8_t> commands;
+    std::vector<int32_t> data;
+};
+
 struct
 {
     uint32_t start_heading = 0;
@@ -76,15 +90,17 @@ struct
 // stage di movimento
 uint8_t stages = 0;
 
-struct Vectors
+class Vectors
 {
-    float xvector = 0;
-    float yvector = 0;
-    float last_dst = 0;
-    float *xvec_ptr = &xvector;
-    float *yvec_ptr = &yvector;
-    int32_t intxvector = (int32_t)(*xvec_ptr * 100);
-    int32_t intyvector = (int32_t)(*yvec_ptr * 100);
+    public:
+        float xvector = 0;
+        float yvector = 0;
+        float last_dst = 0;
+
+        int32_t intxvector() { return (int32_t)(xvector * 100); };
+        int32_t intyvector() { return (int32_t)(yvector * 100); };
+        int32_t abs_intxvector() { return (uint32_t)(abs((int32_t)xvector * 100)); };
+        int32_t abs_intyvector() { return (uint32_t)(abs((int32_t)yvector * 100)); };
 };
 
 struct
@@ -185,15 +201,85 @@ Vectors vectors;
 NavMap navmap;
 NavMapUtil navutil;
 MovementMotors mots;
+CommandQueue cmdqueue;
 uint32_t test = 0;
 
 void NAV::update()
 {
+    /*Serial.print("Command queue contains:");
+    for (uint8_t i = 0; i < cmdqueue.commands.size(); i++)
+    {
+        Serial.print(" ");
+        Serial.print(cmdqueue.commands[i]);
+    }
+    Serial.println();*/
+
     uint64_t start_time = micros();
     if (forward_wait_for_rotation && !rotating)
     {
         forward_wait_for_rotation = false;
         goForward(forward_wait_for_rotation_val, forward_wait_for_rotation_hdg);
+    }
+
+    if (cmdqueue.commands.size() > 0 && !cmdqueue.busy)
+    {
+        Serial.print("Command queue contains:");
+        for (uint8_t i = 0; i < cmdqueue.commands.size(); i++)
+        {
+            Serial.print(" ");
+            Serial.print(cmdqueue.commands[i]);
+        }
+        Serial.println();
+
+        if (cmdqueue.commands[0] == GOFORWARD || cmdqueue.commands[0] == GOBACKWARDS)
+        {
+            NAVCore.println("REMOVING FORWARD/BACKWARDS FROM QUEUE");
+            if (cmdqueue.commands[0] == GOFORWARD)
+                goForward(cmdqueue.data[0], cmdqueue.data[1]); // non si possono usare valori default, sono obbligatori valori noti
+            else
+                goBackwards(cmdqueue.data[0], cmdqueue.data[1]);
+            cmdqueue.commands.erase(cmdqueue.commands.begin()); // elimina il comando in esecuzione
+            // elimina i primi due elementi
+            cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
+            cmdqueue.busy = true;
+        }
+        else if (cmdqueue.commands[0] == ROTATETO)
+        {
+            NAVCore.println("REMOVING ROTATETO FROM QUEUE");
+            rotateToDeg(cmdqueue.data[0], cmdqueue.data[1]);
+            cmdqueue.commands.erase(cmdqueue.commands.begin());
+            cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
+            cmdqueue.busy = true;
+        }
+        else if (cmdqueue.commands[0] == ROTATEFOR)
+        {
+            NAVCore.println("REMOVING ROTATEFOR FROM QUEUE");
+            rotateForDeg(cmdqueue.data[0]);
+            cmdqueue.commands.erase(cmdqueue.commands.begin());
+            cmdqueue.data.erase(cmdqueue.data.begin());
+            cmdqueue.busy = true;
+        }
+        else if (cmdqueue.commands[0] == GOTOPOINT)
+        {
+            NAVCore.println("REMOVING GOTOPOINT FROM QUEUE");
+            uint32_t data0 = cmdqueue.data[0];
+            uint32_t data1 = cmdqueue.data[1];
+            // gli erase DEVONO essere prima della chiamata alla funzione perché goToPoint aggiunge in coda 2 comandi
+            cmdqueue.commands.erase(cmdqueue.commands.begin());
+            cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
+            goToPoint(data0, data1);
+            // gotopoint chiama subito SETHDGTOPOINT quindi non serve cmdqueue.busy = true
+            // l'ggiunta di gotopoint alla coda è ridondante, ma è comodo per quando si vogliono aggiungere in coda diversi
+            // comandi per il movimento
+        }
+        else if (cmdqueue.commands[0] == SETHDGTOPOINT)
+        {
+            NAVCore.println("REMOVING SETHDGTOPOINT FROM QUEUE");
+            setHeadingToPoint((uint32_t)cmdqueue.data[0], (uint32_t)cmdqueue.data[1]);
+            cmdqueue.commands.erase(cmdqueue.commands.begin());
+            cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
+            cmdqueue.busy = true;
+        }
     }
 
     if (going_forward)
@@ -206,6 +292,7 @@ void NAV::update()
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
             stop();
+            cmdqueue.busy = false;
             going_forward = false;
             pausevars.was_going_forward = false;
             gone_forward = true;
@@ -220,6 +307,7 @@ void NAV::update()
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
             stop();
+            cmdqueue.busy = false;
             pausevars.was_going_backwards = false;
             going_backwards = false;
             gone_backwards = true;
@@ -310,7 +398,7 @@ void NAV::update()
                 if (SuddenStop.whileUturn)
                 {
                     NAVSerial.println("SUDDENSTOP WHILE UTURN");
-                    if (distance_traveled > 2)
+                    if (distance_traveled > 200)
                     {
                         NAVSerial.println("DISTANCE TRAVELED OVER 2");
                         SuddenStop.whileUturn = false;
@@ -356,10 +444,10 @@ void NAV::update()
     if (rotating && ENABLE_ROTATION_SENSING)
     {
         uint16_t currentHDG = getHeading360();
-
         if (currentHDG > heading_target - 50 && currentHDG < heading_target + 50)
         {
             stop();
+            cmdqueue.busy = false;
             NAVSensors.resetMovementVars();
             rotating = false;
             rotated = true;
@@ -392,7 +480,7 @@ void NAV::update()
             int32_t to_rotate = Rotation.diff_to_rotate;
 
             // https://www.desmos.com/calculator/3e9myz8cc7
-            // sotto: funzione 5 (derivata funzione 1)
+            // sotto: funzione 5 (derivata della funzione 1)
             spd = 100 + 45 * ((120 * (-2 * to_rotate * pow(norm_diff, 2) + 2 * pow(to_rotate, 2) * norm_diff)) /
             pow(2 * pow(norm_diff, 2) - 2 * to_rotate * norm_diff + pow(to_rotate, 2), 2));
 
@@ -666,14 +754,14 @@ void NAV::update()
                 if (vectors.xvector < 0)
                 {
                     mapfile.print(F("-"));
-                    for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits((uint32_t)(vectors.xvector * -100)); i++)
+                    for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits(vectors.intxvector() * -1); i++)
                         mapfile.print(0);
 
                     mapfile.print((uint32_t)(vectors.xvector * -100));
                 }
                 else
                 {
-                    for (int i = 0; i < MAP_DATA_SIZE - countDigits((uint32_t)(vectors.xvector * 100)); i++)
+                    for (int i = 0; i < MAP_DATA_SIZE - countDigits(vectors.intxvector()); i++)
                         mapfile.print(0);
 
                     mapfile.print((uint32_t)(vectors.xvector * 100));
@@ -684,14 +772,14 @@ void NAV::update()
                 if (vectors.yvector < 0)
                 {
                     mapfile.print(F("-"));
-                    for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits((uint32_t)(vectors.yvector * -100)); i++)
+                    for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits(vectors.intyvector() * -1); i++)
                         mapfile.print(0);
 
                     mapfile.print((uint32_t)(vectors.yvector * -100));
                 }
                 else
                 {
-                    for (int i = 0; i < MAP_DATA_SIZE - countDigits((uint32_t)(vectors.yvector * 100)); i++)
+                    for (int i = 0; i < MAP_DATA_SIZE - countDigits(vectors.intyvector()); i++)
                         mapfile.print(0);
 
                     mapfile.print((uint32_t)(vectors.yvector * 100));
@@ -702,7 +790,7 @@ void NAV::update()
                 if (bordermode)
                 {
                     mapfile.print(2);
-                    if ((vectors.xvector < 5 && vectors.xvector > -5) && (vectors.yvector < 5 && vectors.yvector > -5) && millis() - bordermode_start_time > 10000)
+                    if (vectors.xvector < 5 && vectors.xvector > -5 && vectors.yvector < 5 && vectors.yvector > -5 && millis() - bordermode_start_time > 10000)
                     {
                         bordermode = false;
                         stop();
@@ -717,12 +805,12 @@ void NAV::update()
 
                 mapfile.close();
             }
-            
+
             if (!bordermode)
             {
-                uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
-                uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
-                if (pos_xvector > 200 && pos_yvector > 200)
+                uint32_t pos_xvector = vectors.abs_intxvector();
+                uint32_t pos_yvector = vectors.abs_intyvector();
+                if (pos_xvector > 200 && pos_yvector > 200) // 200 / 100
                 {
                     uint32_t pt_dst, pt_id, pt_idx;
                     std::tie(pt_dst, pt_id, pt_idx) = getClosestPointDst();
@@ -815,6 +903,8 @@ uint32_t NAV::getTime()
 
 void NAV::goForward(uint32_t cm, int32_t hdg_to_maintain)
 {
+    NAVCore.println("GOING FORWARD FOR", cm);
+    cmdqueue.busy = true;
     if (rotating)
     {
         forward_wait_for_rotation_val = cm;
@@ -838,6 +928,7 @@ void NAV::goForward(uint32_t cm, int32_t hdg_to_maintain)
 
 void NAV::goBackwards(uint32_t cm, int32_t hdg_to_maintain)
 {
+    cmdqueue.busy = true;
     pausevars.was_going_forward = true;
     mots.backwards = true;
     mots.motor_start_time = millis();
@@ -863,6 +954,7 @@ void NAV::rotateForDeg(int16_t degs)
            180°
     */
 
+    cmdqueue.busy = true;
     resetMovementVars();
     Rotation.diff_to_rotate = abs(degs);
     int16_t heading_to_reach = degs * 100;
@@ -891,6 +983,7 @@ void NAV::rotateForDeg(int16_t degs)
 
 void NAV::rotateToDeg(uint16_t heading, char direction)
 {
+    cmdqueue.busy = true;
     resetMovementVars();
     rotating = true;
     heading_target = heading;
@@ -1063,6 +1156,11 @@ int32_t NAV::convertHDGTo180(uint16_t heading, bool always_positive)
 
 void NAV::stop()
 {
+    cmdqueue.busy = false;
+    while (cmdqueue.commands.size() > 0)
+        cmdqueue.commands.erase(cmdqueue.commands.begin());
+    while (cmdqueue.data.size() > 0)
+        cmdqueue.data.erase(cmdqueue.data.begin());
     NAVMotors.stop();
     robot_moving_x_y = false;
     pausevars.was_going_backwards = false;
@@ -1102,22 +1200,17 @@ void NAV::readBlock(uint32_t block)
 {
     if (navmap.current_block == block)
         return;
-    navmap = {};
-    navmap.current_block = block;
-    uint32_t pos = 0;
+
     uint32_t start_position = (block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1;
     uint32_t target_position = MAP_BLOCK_SIZE * block - 1;
 
     if (target_position > navutil.last_readable_pos)
         return;
 
-    NAVCore.println("Reading", block);
+    navmap = {};
+    navmap.current_block = block;
+    uint32_t pos = 0;
     uint8_t buffer[5632] = {};
-    mapfile = SD.open("/MAP.txt");
-    mapfile.seek(start_position);
-    mapfile.read(buffer, 5632);
-    mapfile.close();
-
     uint32_t data_type = 0;
     uint32_t read_data = 0;
     int32_t data[768] = {};                 // ci sono 768 dati in 256 punti (256 * 3) o 5632 byte di punti
@@ -1125,13 +1218,20 @@ void NAV::readBlock(uint32_t block)
     temp_data[MAP_DATA_SIZE] = '\0';        // null terminator alla fine della stringa (non è idx 256)
     uint8_t temp_idx = 0;
     uint32_t data_idx = 0;
+
+    NAVCore.println("Reading", block);
+    mapfile = SD.open("/MAP.txt");
+    mapfile.seek(start_position);
+    mapfile.read(buffer, 5632);
+    mapfile.close();
+
     for (int i = 0; i < 5632; i++)
     {
-        if (buffer[i] == 44)
+        if (buffer[i] == 44)                                        // virgola
             continue;
-        if (data_type < 2)
+        if (data_type < 2)                                          // coordinate
         {
-            if (buffer[i] == 45)
+            if (buffer[i] == 45)                                    // ASCII del trattino
                 temp_data[temp_idx] = '-';
             else
                 temp_data[temp_idx] = buffer[i];
@@ -1145,7 +1245,7 @@ void NAV::readBlock(uint32_t block)
             }
             temp_idx++;
         }
-        if (data_type == 2)
+        if (data_type == 2)                                         // ID punto
         {
             data[data_idx] = buffer[i] - '0';
             data_idx++;
@@ -1210,22 +1310,12 @@ uint32_t NAV::getCurrentBlock()
     uint32_t counter = 1;
     uint32_t last_block = 0;
     uint32_t read_blocks = 0;
-    int32_t int_xvector = (int32_t)(vectors.xvector * 100);
-    int32_t int_yvector = (int32_t)(vectors.yvector * 100);
+    int32_t int_xvector = vectors.intxvector();
+    int32_t int_yvector = vectors.intyvector();
 
-    if (navmap.MinX.value < int_xvector)
-    {
-        if (navmap.MaxX.value > int_xvector)
-        {
-            if (navmap.MinY.value < int_yvector)
-            {
-                if (navmap.MaxY.value > int_yvector)
-                {
-                    return navmap.current_block;
-                }
-            }
-        }
-    }
+    // se la posizione del robot è già compresa nei valori del blocco attuali
+    if (navmap.MinX.value < int_xvector && navmap.MaxX.value > int_xvector && navmap.MinY.value < int_yvector &&navmap.MaxY.value > int_yvector)
+        return navmap.current_block;
 
     while (!xblock_found || !yblock_found)
     {
@@ -1312,18 +1402,20 @@ uint32_t NAV::getCurrentBlock()
 
 std::tuple<uint32_t, uint32_t, uint32_t> NAV::getClosestPointDst(uint32_t point_type)
 {
-    getCurrentBlock();
+    uint32_t current_block = getCurrentBlock();
 
     uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
     uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
 
     uint32_t dst_to_closest_point = 1000000;
     uint32_t closest_point_idx = 0;
+    uint32_t second_closest_point_idx = 0;
     for (int i = 0; i < 256; i++)
     {
         if (navmap.curr_arrID[i] != 3)
         {
-            if ((navmap.curr_arrID[i] == point_type && point_type == 200) || point_type != 200)
+            // 200 == qualsiasi punto
+            if ((navmap.curr_arrID[i] == point_type && point_type != 200) || point_type == 200)
             {
                 int32_t xdiff = 0;
                 int32_t xpoint = navmap.curr_arrX[i];
@@ -1338,6 +1430,7 @@ std::tuple<uint32_t, uint32_t, uint32_t> NAV::getClosestPointDst(uint32_t point_
                 ydiff *= (ydiff < 0) ? -1 : 1;
 
                 uint32_t real_diff = sqrt(pow(xdiff, 2) + pow(ydiff, 2)); // pitagora
+                
                 if (real_diff < dst_to_closest_point)
                 {
                     dst_to_closest_point = real_diff;
@@ -1346,6 +1439,62 @@ std::tuple<uint32_t, uint32_t, uint32_t> NAV::getClosestPointDst(uint32_t point_
             }
         }
     }
+
+    // RIVEDERE: DISTANZA PUNTO RETTA PASSANTE PER DUE PUNTI
+    /*dst_to_closest_point = 1000000;
+    for (int i = 0; i < 256; i++)
+    {
+        if (navmap.curr_arrID[i] != 3)
+        {
+            if ((navmap.curr_arrID[i] == point_type && point_type != 200) || point_type == 200)
+            {
+                int32_t xdiff = 0;
+                int32_t xpoint = navmap.curr_arrX[i];
+                xpoint *= (xpoint < 0) ? -1 : 1;
+                xdiff = pos_xvector - xpoint;
+                xdiff *= (xdiff < 0) ? -1 : 1;
+
+                int32_t ydiff = 0;
+                int32_t ypoint = navmap.curr_arrY[i];
+                ypoint *= (ypoint < 0) ? -1 : 1;
+                ydiff = pos_yvector - ypoint;
+                ydiff *= (ydiff < 0) ? -1 : 1;
+
+                uint32_t real_diff = sqrt(pow(xdiff, 2) + pow(ydiff, 2)); // pitagora
+                if (real_diff < dst_to_closest_point && i != closest_point_idx)
+                {
+                    NAVCore.println("second closest point", i);
+                    dst_to_closest_point = real_diff;
+                    second_closest_point_idx = i;
+                }
+            }
+        }
+    }
+
+    struct Point
+    {
+        int32_t x;
+        int32_t y;
+    };
+
+    Point a, b, c;
+    std::tie(a.x, a.y) = getPointXY(current_block, closest_point_idx);
+    std::tie(b.x, b.y) = getPointXY(current_block, second_closest_point_idx);
+    c.x = (int32_t)(vectors.xvector * 100);
+    c.y = (int32_t)(vectors.yvector * 100);
+
+    NAVCore.println("a.x", a.x);
+    NAVCore.println("a.y", a.y);
+    NAVCore.println("b.x", b.x);
+    NAVCore.println("b.y", b.y);
+    NAVCore.println("c.x", c.x);
+    NAVCore.println("c.y", c.y);
+    NAVCore.println("numerator", abs((b.y - a.y) * c.x - (b.x - a.x) * c.y + (b.x * a.y - a.x * b.y)));
+    NAVCore.println("denominator", sqrt(pow(b.y - a.y, 2) + pow(b.x - a.x, 2)));
+
+    int32_t dst = (int32_t)((abs((b.y - a.y) * c.x - (b.x - a.x) * c.y + (b.x * a.y - a.x * b.y))) / sqrt(pow(b.y - a.y, 2) + pow(b.x - a.x, 2)) * 100);
+    Serial.print("DST: ");
+    Serial.println(dst);*/
 
     return std::make_tuple(dst_to_closest_point, navmap.curr_arrID[closest_point_idx], closest_point_idx);
 }
@@ -1520,7 +1669,7 @@ uint32_t NAV::getLastBlock(bool fill)
         mapfile.seek(cursor);
         while (cursor <= target_position)
         {
-            mapfile.print(F("000000000,000000000,3,"));
+            mapfile.print(F("000000000,000000000,3,")); // punto da ignorare (3)
             cursor = mapfile.position();
         }
         mapfile.close();
@@ -1573,6 +1722,7 @@ std::tuple<uint32_t, uint32_t, int32_t> NAV::getBottomPoint(uint8_t axis)
     uint32_t current_block = 1;
     uint32_t block_idx, p_idx = 0;
     int32_t p_value = 1000000000;
+
     while (current_block <= max_block)
     {
         readBlock(current_block);
@@ -1694,25 +1844,28 @@ uint32_t NAV::setHeadingToPoint(int32_t target_x, int32_t target_y)
      * |        180°        |
      */
 
-    uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
-    uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
-    int32_t int_xvector = (int32_t)(vectors.xvector * 100);
-    int32_t int_yvector = (int32_t)(vectors.yvector * 100);
-
+    int32_t ydiff = 0;
     int32_t xdiff = 0;
     int32_t xpoint = target_x;
+    int32_t ypoint = target_y;
+    uint16_t target_heading = 0;
+    uint32_t current_heading = getHeading360();
+    uint32_t pos_xvector = vectors.abs_intxvector();
+    uint32_t pos_yvector = vectors.abs_intyvector();
+    int32_t int_xvector = vectors.intxvector();
+    int32_t int_yvector = vectors.intyvector();
+
+    cmdqueue.busy = true;
+
     xpoint = abs(xpoint);
     xdiff = pos_xvector - xpoint;
     xdiff = abs(xdiff);
 
-    int32_t ydiff = 0;
-    int32_t ypoint = target_y;
     ypoint = abs(ypoint);
     ydiff = pos_yvector - ypoint;
     ydiff = abs(ydiff);
 
     float angle = degrees(atan((float)(xdiff) / (float)(ydiff)));
-    uint16_t target_heading = 0;
     if (target_x > int_xvector && target_y > int_yvector) // alto destra
         target_heading = angle;
     else if (target_x > int_xvector && target_y < int_yvector) // basso destra
@@ -1722,9 +1875,6 @@ uint32_t NAV::setHeadingToPoint(int32_t target_x, int32_t target_y)
     else if (target_x < int_xvector && target_y > int_yvector) // alto sinistra
         target_heading = convertFromRef0ToRelativeHDG((uint16_t)(angle * 100), 270, false);
 
-    NAVCore.println("angle", angle);
-
-    uint32_t current_heading = getHeading360();
     int32_t target_heading_180 = convertHDGTo180(target_heading);
 
     rotateToDeg(target_heading, getRotationDirection(current_heading, target_heading_180));
@@ -1748,34 +1898,36 @@ uint32_t NAV::setHeadingToPoint(uint32_t block, uint32_t point_idx)
     uint32_t seek_position = ((block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1) + point_idx * 22;
     int32_t px = 0;
     int32_t py = 0;
+    int32_t xdiff = 0;
+    int32_t ydiff = 0;
+    uint16_t target_heading = 0;
+    uint32_t current_heading = getHeading360();
+    uint32_t pos_xvector = vectors.abs_intxvector();
+    uint32_t pos_yvector = vectors.abs_intyvector();
+    int32_t int_xvector = vectors.intxvector();
+    int32_t int_yvector = vectors.intyvector();
+
+    cmdqueue.busy = true;
+
     mapfile = SD.open("/MAP.txt");
     mapfile.seek(seek_position);
     px = mapfile.parseInt();
     py = mapfile.parseInt();
     mapfile.close();
 
-    uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
-    uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
-    int32_t int_xvector = (int32_t)(vectors.xvector * 100);
-    int32_t int_yvector = (int32_t)(vectors.yvector * 100);
-
-    int32_t xdiff = 0;
-    int32_t ydiff = 0;
     xdiff = pos_xvector - abs(px);
     ydiff = pos_yvector - abs(py);
 
     float angle = degrees(atan((float)(abs(xdiff)) / (float)(abs(ydiff))));
-    uint16_t target_heading = 0;
-    if (px > int_xvector && py > int_yvector) // alto sinistra
+    if (px > int_xvector && py > int_yvector) // alto destra
         target_heading = angle;
-    else if (px > 0 && py < int_yvector) // basso destra
+    else if (px > int_xvector && py < int_yvector) // basso destra
         target_heading = convertFromRef0ToRelativeHDG((uint16_t)(angle * 100), 90, false);
-    else if (px < 0 && py < int_yvector) // basso sinistra
+    else if (px < int_xvector && py < int_yvector) // basso sinistra
         target_heading = convertFromRef0ToRelativeHDG((uint16_t)(angle * 100), 180, false);
-    else if (px < 0 && py > int_yvector) // alto sinistra
+    else if (px < int_xvector && py > int_yvector) // alto sinistra
         target_heading = convertFromRef0ToRelativeHDG((uint16_t)(angle * 100), 270, false);
 
-    uint32_t current_heading = getHeading360();
     int32_t target_heading_180 = convertHDGTo180(target_heading);
 
     rotateToDeg(target_heading, getRotationDirection(current_heading, target_heading_180));
@@ -1785,6 +1937,8 @@ uint32_t NAV::setHeadingToPoint(uint32_t block, uint32_t point_idx)
 
 uint32_t NAV::getPointDst(uint32_t block, uint32_t point_idx)
 {
+    NAVCore.println("CALCULATING DISTANCE TO POINT ON BLOCK", block);
+    NAVCore.println("IDX", point_idx);
     uint32_t seek_position = ((block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1) + point_idx * 22;
     int32_t px = 0;
     int32_t py = 0;
@@ -1794,16 +1948,18 @@ uint32_t NAV::getPointDst(uint32_t block, uint32_t point_idx)
     py = mapfile.parseInt();
     mapfile.close();
 
+    NAVCore.println("X", px);
+    NAVCore.println("Y", py);
+
     uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
     uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
 
     int32_t xdiff = 0;
     int32_t ydiff = 0;
-    xdiff = pos_xvector - abs(px);
-    ydiff = pos_yvector - abs(py);
+    xdiff = (int32_t)pos_xvector - (int32_t)abs(px);
+    ydiff = (int32_t)pos_yvector - (int32_t)abs(py);
 
     uint32_t dst = sqrt(pow(abs(xdiff), 2) + pow(abs(ydiff), 2)); // pitagora
-
     return dst;
 }
 
@@ -1814,58 +1970,46 @@ uint32_t NAV::getPointDst(int32_t x, int32_t y)
 
     int32_t xdiff = 0;
     int32_t ydiff = 0;
-    xdiff = pos_xvector - abs(x);
-    ydiff = pos_yvector - abs(y);
+    xdiff = (int32_t)pos_xvector - (int32_t)abs(x);
+    ydiff = (int32_t)pos_yvector - (int32_t)abs(y);
 
     uint32_t dst = sqrt(pow(abs(xdiff), 2) + pow(abs(ydiff), 2)); // pitagora
-
     return dst;
 }
 
 void NAV::goToPoint(int32_t x, int32_t y)
 {
-    NAVCore.println("HEADING TO POINT TO", setHeadingToPoint(x, y));
-    NAVCore.println("POINT DST", getPointDst(x, y));
+    setHeadingToPoint(x, y);
+    getPointDst(x, y);
 }
 
 void NAV::goToPoint(uint32_t block, uint32_t point_idx)
 {
-    setHeadingToPoint(block, point_idx);
-    goForward(getPointDst(block, point_idx));
+    std::vector<uint8_t> commands = {SETHDGTOPOINT, GOFORWARD};
+    std::vector<int32_t> data = {(int32_t)block, (int32_t)point_idx, (int32_t)(getPointDst(block, point_idx) / 100), NAVSensors.getHeading()};
+    addToCommandQueue(commands, data, true);
 }
 
 void NAV::scroll()
 {
-    int32_t top_blk_x, top_pidx_x, top_pval_x = 0;
-    int32_t top_blk_y, top_pidx_y, top_pval_y = 0;
-    int32_t bot_blk_x, bot_pidx_x, bot_pval_x = 0;
+    int32_t int_xvector = vectors.intxvector();
+    int32_t int_yvector = vectors.intyvector();
+    int32_t starting_blk_x, starting_pidx_x, starting_pval_x = 0;
+    int32_t end_point_blk_x, end_point_idx_x, end_point_val_x;
 
-    pause();
-    std::tie(top_blk_x, top_pidx_x, top_pval_x) = getTopPoint(X);
-    std::tie(top_blk_y, top_pidx_y, top_pval_y) = getTopPoint(Y);
-    std::tie(bot_blk_x, bot_pidx_x, bot_pval_x) = getBottomPoint(X);
-    resume();
+    std::tie(starting_blk_x, starting_pidx_x, starting_pval_x) = getBottomPoint(X); // punto più a sinstra, punto iniziale
+    std::tie(end_point_blk_x, end_point_idx_x, end_point_val_x) = getTopPoint(X); // punto più a destra, punto finale
 
-    NAVCore.println("x vector", vectors.xvector);
-    NAVCore.println("y vector", vectors.yvector);
+    uint32_t mean_diff = getMeanDiff(starting_blk_x, X);
+    uint32_t key_points = (uint32_t)(std::ceil((end_point_val_x - starting_pval_x) / mean_diff));
+    // il robot si dovrà spostare a destra di mean_diff mm, per key_points volte
 
-    goToPoint(1, 1);
-    /*int32_t top_x_x, top_x_y = 0;
-    int32_t bot_x_x, bot_x_y = 0;
-    int32_t top_y_x, top_y_y = 0;
-    int32_t bot_y_x, bot_y_y = 0;
-    std::tie(top_x_x, top_x_y) = getPointXY(top_blk_x, top_pidx_x);
-    std::tie(bot_x_x, bot_x_y) = getPointXY(bot_blk_x, bot_pidx_x);
-    std::tie(top_y_x, top_y_y) = getPointXY(top_blk_y, top_pidx_y);
-    std::tie(bot_y_x, bot_y_y) = getPointXY(bot_blk_y, bot_pidx_y);
-    NAVCore.println("top_x_x", top_x_x);
-    NAVCore.println("top_x_y", top_x_y);
-    NAVCore.println("bot_x_x", bot_x_x);
-    NAVCore.println("bot_x_y", bot_x_y);
-    NAVCore.println("top_y_x", top_y_x);
-    NAVCore.println("top_y_y", top_y_y);
-    NAVCore.println("bot_y_x", bot_y_x);
-    NAVCore.println("bot_y_y", bot_y_y);*/
+    std::vector<uint8_t> commands = {GOTOPOINT, ROTATETO};
+    std::vector<int32_t> data = {starting_blk_x, starting_pidx_x, 0, getRotationDirection(getHeading360(), 0)};
+    addToCommandQueue(commands, data); // TESTARE
+    /* equivalente di (ma messi in coda, da eseguire uno alla volta):
+    goToPoint((uint32_t)starting_blk_x, (uint32_t)starting_pidx_x);
+    rotateToDeg(0, getRotationDirection(getHeading360(), 0)); */
 }
 
 void NAV::pause()
@@ -1938,7 +2082,7 @@ bool NAV::checkMapCompletion()
 
     if (accessible_points_count < 50)
     {
-        NAVCore.println("MAP incomplete");
+        NAVCore.println("(Navigation) MAP incomplete");
         navutil.map_not_full = true;
         return true;
     }
@@ -1956,15 +2100,74 @@ uint32_t NAV::invert180HDG(int32_t hdg)
     return 180 - abs(hdg);
 }
 
+uint32_t NAV::getMeanDiff(uint32_t block, uint8_t axis)
+{
+    readBlock(block);
+    uint32_t total_diff = 0;
+    for (uint32_t i = 0; i < 255; i++) // fino a 254 perché c'è navmap.arrX[i + 1] quindi al ciclo 254 sarebbe 255 (max)
+    {
+        uint32_t diff = 0;
+        if (axis == X)
+            diff = abs(navmap.arrX[i + 1] - navmap.arrX[i]);
+        else
+            diff = abs(navmap.arrY[i + 1] - navmap.arrY[i]);
+        total_diff += diff;
+    }
+    uint32_t mean_diff = uint32_t((float)total_diff / 255);
+    return mean_diff;
+}
+
+void NAV::addToCommandQueue(uint8_t cmd, std::vector<int32_t> data, bool push_forward)
+{
+    if (push_forward)
+    {
+        cmdqueue.commands.emplace(cmdqueue.commands.begin(), cmd);
+        for (uint8_t i = data.size() - 1; i >= 0; i--)
+            cmdqueue.data.emplace(cmdqueue.data.begin(), data[i]);
+    }
+    else
+    {
+        cmdqueue.commands.push_back(cmd);
+        for (uint8_t i = 0; i < data.size(); i++)
+            cmdqueue.data.push_back(data[i]);
+    }
+}
+
+void NAV::addToCommandQueue(std::vector<uint8_t> cmds, std::vector<int32_t> data, bool push_forward)
+{
+    if (push_forward)
+    {
+        for (uint8_t i = cmds.size() - 1; i >= 0; i--)
+        {
+            cmdqueue.commands.emplace(cmdqueue.commands.begin(), cmds[i]);
+            if (i == 0)
+                break;
+        }
+        for (uint8_t i = data.size() - 1; i >= 0; i--)
+        {
+            cmdqueue.data.emplace(cmdqueue.data.begin(), data[i]);
+            if (i == 0)
+                break;
+        }
+    }
+    else
+    {
+        for (uint8_t i = 0; i < cmds.size(); i++)
+            cmdqueue.commands.push_back(cmds[i]);
+        for (uint8_t i = 0; i < data.size(); i++)
+            cmdqueue.data.push_back(data[i]);
+    }
+}
+
 void NAV::begin()
 {
     spi = new SPIClass(VSPI);
     spi->begin(SCLK, MISO, MOSI, CS);
     if (SD.begin(CS, *spi))
-        NAVCore.println(F("--- Scheda SD OK ---"));
+        NAVCore.println(F("(Navigation) SD Card OK"));
     else
     {
-        NAVCore.println(F("--- Scheda SD NON RICONOSCIUTA, RESTART ---"));
+        NAVCore.println(F("(Navigation) SD Card not recognized, RESTART"));
         ESP.restart();
     }
 
@@ -1972,7 +2175,6 @@ void NAV::begin()
     navutil.last_readable_pos = getSDLastReadablePosition();
     getLastBlock(true);
     navutil.last_readable_pos = getSDLastReadablePosition();
-    NAVCore.println("LAST SD POSITION", navutil.last_readable_pos);
     readBlock(1);
     checkMapCompletion();
 }

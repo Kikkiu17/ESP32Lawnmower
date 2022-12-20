@@ -27,13 +27,15 @@ bool stop_logging = false;
 void Core::begin()
 {
     status.begin();
+    println(F("Status OK"));
     motors.begin();
+    println(F("Motors OK"));
     sensors.begin();
-    status.setReady(true);
-    println("Free heap before nav", ESP.getFreeHeap());
-    println("Max allocable heap block before nav", ESP.getMaxAllocHeap());
+    println(F("Sensors OK"));
     navigation.begin();
+    println(F("Navigation OK"));
     mux.begin();
+    println(F("Multiplexer OK"));
 
     status.setReady(true);
     motors.setSpeed(0, MAIN);
@@ -188,14 +190,6 @@ void Core::loop()
         return;
     navigation.update();
 
-    /*if (millis() - ref_time > 1000)
-    {
-        ref_time = millis();
-        Serial.println("SENSOR DATA PACKET");
-        for (int i = 0; i < 9; i++)
-            Serial.println(*(ptr + i));
-    }*/
-
     if (SHOW_MODULE_EXECUTION_TIME)
     {
         if (millis() - ref_time > 250)
@@ -220,11 +214,11 @@ void Core::printTimestamp()
     {
         Serial.print("AT_");
         Serial.print(millis());
-        Serial.print(":");
+        Serial.print(": ");
     }
     coreSerialBT.print("AT_");
     coreSerialBT.print(millis());
-    coreSerialBT.print(":");
+    coreSerialBT.print(": ");
 }
 
 void Core::print(const __FlashStringHelper* type, float data)
@@ -236,12 +230,10 @@ void Core::print(const __FlashStringHelper* type, float data)
             Serial.print(type);
             Serial.print(F(": "));
             Serial.print(data);
-            Serial.print(F(";"));
         }
         coreSerialBT.print(type);
         coreSerialBT.print(F(": "));
         coreSerialBT.print(data);
-        coreSerialBT.print(F(";"));
     }
     else
     {
@@ -286,12 +278,10 @@ void Core::print(const char *type, float data)
             Serial.print(type);
             Serial.print(F(": "));
             Serial.print(data);
-            Serial.print(F(";"));
         }
         coreSerialBT.print(type);
         coreSerialBT.print(F(": "));
         coreSerialBT.print(data);
-        coreSerialBT.print(F(";"));
     }
     else
     {
