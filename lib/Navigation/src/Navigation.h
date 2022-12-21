@@ -159,7 +159,7 @@ class NAV
          * Ferma il robot e reimposta solo le variabili di movimento principali (going fwd/bck, robot moving, rotating, dst traveled)
          * 
          */
-        void stop();
+        void stop(bool clear_command_queue = true);
 
         /**
          * Aggiunge un certo valore ai vettori di distanza percorsa attuali e li restituisce senza modificarli effettivamente
@@ -281,6 +281,8 @@ class NAV
 
         void addToCommandQueue(uint8_t cmd, std::vector<int32_t> data, bool push_forward = false);
         void addToCommandQueue(std::vector<uint8_t> cmds, std::vector<int32_t> data, bool push_forward = false);
+
+        void displayQueue();
 };
 
 #endif

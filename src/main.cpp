@@ -31,7 +31,7 @@ bool status_led = false;
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(921600);
   SerialBT.begin("ESP32ROBOT");
 
   /* #region  WiFi, ElegantOTA */

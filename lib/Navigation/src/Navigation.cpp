@@ -206,16 +206,8 @@ uint32_t test = 0;
 
 void NAV::update()
 {
-    /*Serial.print("Command queue contains:");
-    for (uint8_t i = 0; i < cmdqueue.commands.size(); i++)
-    {
-        Serial.print(" ");
-        Serial.print(cmdqueue.commands[i]);
-    }
-    Serial.println();*/
-
     uint64_t start_time = micros();
-    if (forward_wait_for_rotation && !rotating)
+    if (forward_wait_for_rotation && !rotating) // non serve più con la coda -- eliminare
     {
         forward_wait_for_rotation = false;
         goForward(forward_wait_for_rotation_val, forward_wait_for_rotation_hdg);
@@ -223,29 +215,18 @@ void NAV::update()
 
     if (cmdqueue.commands.size() > 0 && !cmdqueue.busy)
     {
-        Serial.print("Command queue contains:");
-        for (uint8_t i = 0; i < cmdqueue.commands.size(); i++)
-        {
-            Serial.print(" ");
-            Serial.print(cmdqueue.commands[i]);
-        }
-        Serial.println();
-
         if (cmdqueue.commands[0] == GOFORWARD || cmdqueue.commands[0] == GOBACKWARDS)
         {
-            NAVCore.println("REMOVING FORWARD/BACKWARDS FROM QUEUE");
             if (cmdqueue.commands[0] == GOFORWARD)
                 goForward(cmdqueue.data[0], cmdqueue.data[1]); // non si possono usare valori default, sono obbligatori valori noti
             else
                 goBackwards(cmdqueue.data[0], cmdqueue.data[1]);
             cmdqueue.commands.erase(cmdqueue.commands.begin()); // elimina il comando in esecuzione
-            // elimina i primi due elementi
             cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
             cmdqueue.busy = true;
         }
         else if (cmdqueue.commands[0] == ROTATETO)
         {
-            NAVCore.println("REMOVING ROTATETO FROM QUEUE");
             rotateToDeg(cmdqueue.data[0], cmdqueue.data[1]);
             cmdqueue.commands.erase(cmdqueue.commands.begin());
             cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
@@ -253,7 +234,6 @@ void NAV::update()
         }
         else if (cmdqueue.commands[0] == ROTATEFOR)
         {
-            NAVCore.println("REMOVING ROTATEFOR FROM QUEUE");
             rotateForDeg(cmdqueue.data[0]);
             cmdqueue.commands.erase(cmdqueue.commands.begin());
             cmdqueue.data.erase(cmdqueue.data.begin());
@@ -261,7 +241,6 @@ void NAV::update()
         }
         else if (cmdqueue.commands[0] == GOTOPOINT)
         {
-            NAVCore.println("REMOVING GOTOPOINT FROM QUEUE");
             uint32_t data0 = cmdqueue.data[0];
             uint32_t data1 = cmdqueue.data[1];
             // gli erase DEVONO essere prima della chiamata alla funzione perché goToPoint aggiunge in coda 2 comandi
@@ -274,7 +253,6 @@ void NAV::update()
         }
         else if (cmdqueue.commands[0] == SETHDGTOPOINT)
         {
-            NAVCore.println("REMOVING SETHDGTOPOINT FROM QUEUE");
             setHeadingToPoint((uint32_t)cmdqueue.data[0], (uint32_t)cmdqueue.data[1]);
             cmdqueue.commands.erase(cmdqueue.commands.begin());
             cmdqueue.data.erase(cmdqueue.data.begin(), cmdqueue.data.begin() + 2);
@@ -291,7 +269,7 @@ void NAV::update()
 
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
-            stop();
+            stop(false);
             cmdqueue.busy = false;
             going_forward = false;
             pausevars.was_going_forward = false;
@@ -306,7 +284,7 @@ void NAV::update()
 
         if (distance_traveled >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
-            stop();
+            stop(false);
             cmdqueue.busy = false;
             pausevars.was_going_backwards = false;
             going_backwards = false;
@@ -394,13 +372,10 @@ void NAV::update()
                 // se viene di nuovo fermato di colpo (entro 1.5 secondi dal primo blocco), allora cambia direzione (abilitando uturn)
                 // questo solo se l'uturn non era già in corso; se lo era, riprende da dove era rimasto
                 NAVSerial.println();
-                NAVSerial.println("CHECK SECOND SUDDEN STOP");
                 if (SuddenStop.whileUturn)
                 {
-                    NAVSerial.println("SUDDENSTOP WHILE UTURN");
                     if (distance_traveled > 200)
                     {
-                        NAVSerial.println("DISTANCE TRAVELED OVER 2");
                         SuddenStop.whileUturn = false;
                         distance_traveled = distance_traveled_before_uturn_sudden_stop;
                         UTurn.active = true;
@@ -408,7 +383,6 @@ void NAV::update()
                     }
                     else if (millis() - SuddenStop.timer <= 3000)
                     {
-                        NAVSerial.println("DISTANCE TRAVELED LESS THAN 2 AND SUDDENSTOP TIMER LESS THAN 3s");
                         SuddenStop.whileUturn = false;
                         check_second_sudden_stop = false;
                         enableUTurn();
@@ -446,7 +420,7 @@ void NAV::update()
         uint16_t currentHDG = getHeading360();
         if (currentHDG > heading_target - 50 && currentHDG < heading_target + 50)
         {
-            stop();
+            stop(false);
             cmdqueue.busy = false;
             NAVSensors.resetMovementVars();
             rotating = false;
@@ -483,7 +457,6 @@ void NAV::update()
             // sotto: funzione 5 (derivata della funzione 1)
             spd = 100 + 45 * ((120 * (-2 * to_rotate * pow(norm_diff, 2) + 2 * pow(to_rotate, 2) * norm_diff)) /
             pow(2 * pow(norm_diff, 2) - 2 * to_rotate * norm_diff + pow(to_rotate, 2), 2));
-
             NAVMotors.setSpeed(spd, BOTH);
 
             /*if (diff < 7600)
@@ -794,7 +767,7 @@ void NAV::update()
                     {
                         bordermode = false;
                         stop();
-                        NAVCore.println("Bordermode COMPLETED");
+                        NAVCore.println(F("Bordermode COMPLETED"));
                         ESP.restart();
                     }
                 }
@@ -1154,13 +1127,16 @@ int32_t NAV::convertHDGTo180(uint16_t heading, bool always_positive)
         return heading;
 }
 
-void NAV::stop()
+void NAV::stop(bool clear_command_queue)
 {
     cmdqueue.busy = false;
-    while (cmdqueue.commands.size() > 0)
-        cmdqueue.commands.erase(cmdqueue.commands.begin());
-    while (cmdqueue.data.size() > 0)
-        cmdqueue.data.erase(cmdqueue.data.begin());
+    if (clear_command_queue)
+    {
+        while (cmdqueue.commands.size() > 0)
+            cmdqueue.commands.erase(cmdqueue.commands.begin());
+        while (cmdqueue.data.size() > 0)
+            cmdqueue.data.erase(cmdqueue.data.begin());
+    }
     NAVMotors.stop();
     robot_moving_x_y = false;
     pausevars.was_going_backwards = false;
@@ -1192,7 +1168,7 @@ uint16_t NAV::invertHDG(uint16_t hdg)
 void NAV::eraseSD(const char *path)
 {
     mapfile = SD.open(path, FILE_WRITE);
-    mapfile.print("");
+    mapfile.print(F(""));
     mapfile.close();
 }
 
@@ -1220,7 +1196,7 @@ void NAV::readBlock(uint32_t block)
     uint32_t data_idx = 0;
 
     NAVCore.println("Reading", block);
-    mapfile = SD.open("/MAP.txt");
+    mapfile = SD.open(F("/MAP.txt"));
     mapfile.seek(start_position);
     mapfile.read(buffer, 5632);
     mapfile.close();
@@ -1440,62 +1416,6 @@ std::tuple<uint32_t, uint32_t, uint32_t> NAV::getClosestPointDst(uint32_t point_
         }
     }
 
-    // RIVEDERE: DISTANZA PUNTO RETTA PASSANTE PER DUE PUNTI
-    /*dst_to_closest_point = 1000000;
-    for (int i = 0; i < 256; i++)
-    {
-        if (navmap.curr_arrID[i] != 3)
-        {
-            if ((navmap.curr_arrID[i] == point_type && point_type != 200) || point_type == 200)
-            {
-                int32_t xdiff = 0;
-                int32_t xpoint = navmap.curr_arrX[i];
-                xpoint *= (xpoint < 0) ? -1 : 1;
-                xdiff = pos_xvector - xpoint;
-                xdiff *= (xdiff < 0) ? -1 : 1;
-
-                int32_t ydiff = 0;
-                int32_t ypoint = navmap.curr_arrY[i];
-                ypoint *= (ypoint < 0) ? -1 : 1;
-                ydiff = pos_yvector - ypoint;
-                ydiff *= (ydiff < 0) ? -1 : 1;
-
-                uint32_t real_diff = sqrt(pow(xdiff, 2) + pow(ydiff, 2)); // pitagora
-                if (real_diff < dst_to_closest_point && i != closest_point_idx)
-                {
-                    NAVCore.println("second closest point", i);
-                    dst_to_closest_point = real_diff;
-                    second_closest_point_idx = i;
-                }
-            }
-        }
-    }
-
-    struct Point
-    {
-        int32_t x;
-        int32_t y;
-    };
-
-    Point a, b, c;
-    std::tie(a.x, a.y) = getPointXY(current_block, closest_point_idx);
-    std::tie(b.x, b.y) = getPointXY(current_block, second_closest_point_idx);
-    c.x = (int32_t)(vectors.xvector * 100);
-    c.y = (int32_t)(vectors.yvector * 100);
-
-    NAVCore.println("a.x", a.x);
-    NAVCore.println("a.y", a.y);
-    NAVCore.println("b.x", b.x);
-    NAVCore.println("b.y", b.y);
-    NAVCore.println("c.x", c.x);
-    NAVCore.println("c.y", c.y);
-    NAVCore.println("numerator", abs((b.y - a.y) * c.x - (b.x - a.x) * c.y + (b.x * a.y - a.x * b.y)));
-    NAVCore.println("denominator", sqrt(pow(b.y - a.y, 2) + pow(b.x - a.x, 2)));
-
-    int32_t dst = (int32_t)((abs((b.y - a.y) * c.x - (b.x - a.x) * c.y + (b.x * a.y - a.x * b.y))) / sqrt(pow(b.y - a.y, 2) + pow(b.x - a.x, 2)) * 100);
-    Serial.print("DST: ");
-    Serial.println(dst);*/
-
     return std::make_tuple(dst_to_closest_point, navmap.curr_arrID[closest_point_idx], closest_point_idx);
 }
 
@@ -1523,39 +1443,8 @@ void NAV::sdspeedtest()
     uint32_t start_time = millis();
     mapfile = SD.open("/MAP.txt");
     mapfile.readBytes(buffer, 5632);
-    /*uint8_t bytes_read = 0;
-    uint8_t data_type = 0;
-    uint8_t n_data_read = 0;
-    char buffer[256];
-    while (mapfile.available())
-    {
-        buffer[bytes_read] = mapfile.read();
-        if (buffer[bytes_read] == ',')
-        {
-            buffer[bytes_read] = '\0';
-            int32_t data;
-            sscanf(buffer, "%d", &data);
-            if (data_type == 0)
-                *(navmap->arrX + n_data_read) = data;
-            else if (data_type == 1)
-                *(navmap->arrY + n_data_read) = data;
-            else if (data_type == 2)
-            {
-                *(navmap->arrID + n_data_read) = data;
-                data_type = 0;
-                n_data_read++;
-                continue;
-            }
-
-            data_type++;
-
-            bytes_read = 0;
-        }
-        else
-            bytes_read++;
-    }*/
     mapfile.close();
-    Serial.println("TIME");
+    Serial.println(F("TIME"));
     Serial.println(millis() - start_time);
     for (int i = 0; i < 5632; i++)
         Serial.print(buffer[i]);
@@ -1649,6 +1538,7 @@ std::tuple<int32_t, int32_t> NAV::getVectors(int32_t val, uint32_t hdg)
 
 uint32_t NAV::getLastBlock(bool fill)
 {
+    NAVCore.print(F("(Navigation) MAP "));
     uint32_t last_f_block = 0;
     uint32_t last_incmplete_block = 0;
     uint32_t max_readable_pos = navutil.last_readable_pos;
@@ -1663,6 +1553,7 @@ uint32_t NAV::getLastBlock(bool fill)
 
     if (fill && last_incmplete_block != 0)
     {
+        NAVCore.print(F("(Navigation) MAP incomplete, filling... "));
         uint32_t target_position = MAP_BLOCK_SIZE * last_incmplete_block - 1;
         uint32_t cursor = max_readable_pos;
         mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
@@ -1673,10 +1564,12 @@ uint32_t NAV::getLastBlock(bool fill)
             cursor = mapfile.position();
         }
         mapfile.close();
+        NAVCore.println(F("DONE"));
     }
 
     navutil.last_full_block = last_f_block;
     navutil.last_incomplete_block = last_incmplete_block;
+    NAVCore.println(F("OK"));
 
     return last_f_block;
 }
@@ -1809,7 +1702,7 @@ std::tuple<int32_t, int32_t> NAV::getPointXY(uint32_t block, uint32_t point_idx)
     uint32_t seek_position = block_position + idx_position;
     int32_t x = 0;
     int32_t y = 0;
-    mapfile = SD.open("/MAP.txt");
+    mapfile = SD.open(F("/MAP.txt"));
     mapfile.seek(seek_position);
     for (int i = 0; i < 2; i++)
     {
@@ -1909,7 +1802,7 @@ uint32_t NAV::setHeadingToPoint(uint32_t block, uint32_t point_idx)
 
     cmdqueue.busy = true;
 
-    mapfile = SD.open("/MAP.txt");
+    mapfile = SD.open(F("/MAP.txt"));
     mapfile.seek(seek_position);
     px = mapfile.parseInt();
     py = mapfile.parseInt();
@@ -1937,20 +1830,14 @@ uint32_t NAV::setHeadingToPoint(uint32_t block, uint32_t point_idx)
 
 uint32_t NAV::getPointDst(uint32_t block, uint32_t point_idx)
 {
-    NAVCore.println("CALCULATING DISTANCE TO POINT ON BLOCK", block);
-    NAVCore.println("IDX", point_idx);
     uint32_t seek_position = ((block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1) + point_idx * 22;
     int32_t px = 0;
     int32_t py = 0;
-    mapfile = SD.open("/MAP.txt");
+    mapfile = SD.open(F("/MAP.txt"));
     mapfile.seek(seek_position);
     px = mapfile.parseInt();
     py = mapfile.parseInt();
     mapfile.close();
-
-    NAVCore.println("X", px);
-    NAVCore.println("Y", py);
-
     uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
     uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
 
@@ -1994,21 +1881,23 @@ void NAV::scroll()
 {
     int32_t int_xvector = vectors.intxvector();
     int32_t int_yvector = vectors.intyvector();
-    int32_t starting_blk_x, starting_pidx_x, starting_pval_x = 0;
-    int32_t end_point_blk_x, end_point_idx_x, end_point_val_x;
+    int32_t start_blk_x, start_idx_x, start_pval_x = 0;
+    int32_t end_point_blk_x, end_point_idx_x, end_point_val_x = 0;
 
-    std::tie(starting_blk_x, starting_pidx_x, starting_pval_x) = getBottomPoint(X); // punto più a sinstra, punto iniziale
+    std::tie(start_blk_x, start_idx_x, start_pval_x) = getBottomPoint(X); // punto più a sinstra, punto iniziale
     std::tie(end_point_blk_x, end_point_idx_x, end_point_val_x) = getTopPoint(X); // punto più a destra, punto finale
 
-    uint32_t mean_diff = getMeanDiff(starting_blk_x, X);
-    uint32_t key_points = (uint32_t)(std::ceil((end_point_val_x - starting_pval_x) / mean_diff));
+    uint32_t mean_diff = getMeanDiff(start_blk_x, X);
+    uint32_t key_points = (uint32_t)(std::ceil((end_point_val_x - start_pval_x) / mean_diff));
     // il robot si dovrà spostare a destra di mean_diff mm, per key_points volte
+    NAVCore.println(F("MEAN DIFF"), mean_diff);
+    NAVCore.println(F("KEY POINTS"), key_points);
 
-    std::vector<uint8_t> commands = {GOTOPOINT, ROTATETO};
-    std::vector<int32_t> data = {starting_blk_x, starting_pidx_x, 0, getRotationDirection(getHeading360(), 0)};
-    addToCommandQueue(commands, data); // TESTARE
+    std::vector<uint8_t> commands = {GOTOPOINT, SETHDGTOPOINT};
+    std::vector<int32_t> data = {start_blk_x, start_idx_x, end_point_blk_x, end_point_idx_x};
+    addToCommandQueue(commands, data);
     /* equivalente di (ma messi in coda, da eseguire uno alla volta):
-    goToPoint((uint32_t)starting_blk_x, (uint32_t)starting_pidx_x);
+    goToPoint((uint32_t)start_blk_x, (uint32_t)start_pidx_x);
     rotateToDeg(0, getRotationDirection(getHeading360(), 0)); */
 }
 
@@ -2069,6 +1958,7 @@ bool NAV::checkMapCompletion()
         navutil.map_completion_checked = true;
     else
         return navutil.map_not_full;
+
     uint32_t accessible_points_count = 0;
     for (uint32_t current_block = 1; current_block <= navutil.last_full_block; current_block++)
     {
@@ -2082,7 +1972,7 @@ bool NAV::checkMapCompletion()
 
     if (accessible_points_count < 50)
     {
-        NAVCore.println("(Navigation) MAP incomplete");
+        NAVCore.println(F("(Navigation) MAP has few accessible points!"), accessible_points_count);
         navutil.map_not_full = true;
         return true;
     }
@@ -2159,6 +2049,24 @@ void NAV::addToCommandQueue(std::vector<uint8_t> cmds, std::vector<int32_t> data
     }
 }
 
+void NAV::displayQueue()
+{
+    Serial.print(F("Command queue contains:"));
+    for (uint8_t i = 0; i < cmdqueue.commands.size(); i++)
+    {
+        Serial.print(F(" "));
+        Serial.print(cmdqueue.commands[i]);
+    }
+    Serial.println();
+    Serial.print(F("Data queue contains:"));
+    for (uint8_t i = 0; i < cmdqueue.data.size(); i++)
+    {
+        Serial.print(F(" "));
+        Serial.print(cmdqueue.data[i]);
+    }
+    Serial.println();
+}
+
 void NAV::begin()
 {
     spi = new SPIClass(VSPI);
@@ -2171,10 +2079,9 @@ void NAV::begin()
         ESP.restart();
     }
 
-    mapfile = SD.open("/MAP.txt");
+    mapfile = SD.open(F("/MAP.txt"));
     navutil.last_readable_pos = getSDLastReadablePosition();
     getLastBlock(true);
     navutil.last_readable_pos = getSDLastReadablePosition();
-    readBlock(1);
     checkMapCompletion();
 }

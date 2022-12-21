@@ -245,7 +245,7 @@ void Core::print(const __FlashStringHelper* type, float data)
 
 void Core::println(const __FlashStringHelper* type, float data)
 {
-    printTimestamp();
+    // printTimestamp();
     if (data != -25565)
     {
         if (USING_USB_SERIAL)
@@ -293,7 +293,7 @@ void Core::print(const char *type, float data)
 
 void Core::println(const char *type, float data)
 {
-    printTimestamp();
+    // printTimestamp();
     if (data != -25565)
     {
         if (USING_USB_SERIAL)
@@ -318,7 +318,7 @@ void Core::println(const char *type, float data)
 
 void Core::println(const String type, float data)
 {
-    printTimestamp();
+    // printTimestamp();
     if (data != -25565)
     {
         if (USING_USB_SERIAL)
