@@ -231,16 +231,11 @@ void Sensors::begin()
     if (mpu.begin() == 0)
     {
         mpu_ready = true;
-        sensorcore.print(F(" OK"));
-        Serial.println();
-        sensorserial.println();
+        sensorcore.println(F(" OK"));
         sensorcore.print(F("(Sensors) Calibrating accelerometer / gyro"));
-        mpu.calcOffsets(true,true);
-        sensorserial.println();
+        mpu.calcOffsets(true, true);
         mpu_calibrated = true;
-        sensorcore.print(F(" OK"));
-        Serial.println();
-        sensorserial.println();
+        sensorcore.println(F(" OK"));
         pinMode(INTERRUPT_PIN, INPUT);
         pinMode(RPM_SENS, INPUT_PULLDOWN);
         sensor_packetptr = sensormux.getPacketPointer();
