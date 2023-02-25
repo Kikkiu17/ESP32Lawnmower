@@ -7,20 +7,19 @@
 #include <SETTINGS.h>
 #include <BluetoothSerial.h>
 #include <limits.h>
-#include <Mux.h>
-
-#if !USE_SD
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
+#include <Mux.h>
 #include "wifi_creds.h"
-
-AsyncWebServer server(80);
-WifiCredentials wificreds;
+#ifdef ENABLE_WEBSERIAL
+#include <WebSerial.h>
 #endif
 
+AsyncWebServer server(80);
 BluetoothSerial SerialBT;
+WifiCredentials wificreds;
 Motors robotmotors;
 Sensors robotsensors;
 Status robotstatus;
@@ -36,7 +35,6 @@ void setup()
   SerialBT.begin("ESP32ROBOT");
 
   /* #region  WiFi, ElegantOTA */
-  #if (!USE_SD)
   WiFi.mode(WIFI_STA);
   WiFi.begin(wificreds.ssid, wificreds.password);
 
@@ -61,7 +59,6 @@ void setup()
 
   AsyncElegantOTA.begin(&server);
   server.begin();
-  #endif
   /* #endregion */
 
   core.begin();

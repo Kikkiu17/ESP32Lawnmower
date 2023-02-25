@@ -16,7 +16,7 @@ struct MainMotor
     struct
     {
         bool active = false;
-        uint32_t note_n = 0;
+        uint8_t note_n = 0;
         uint32_t time = 0;
     } playsound;
 
@@ -36,8 +36,8 @@ MainMotor mainmotor;
 const float wheel_circumference = WHEEL_DIAMETER * 3.14;
 const float wheel_encoder_ratio = WHEEL_DIAMETER / ENCODER_DIAMETER;
 
-uint32_t left_spd = MOT_MAX_VAL;
-uint32_t right_spd = MOT_MAX_VAL;
+uint8_t left_spd = MOT_MAX_VAL;
+uint8_t right_spd = MOT_MAX_VAL;
 
 bool robot_moving = false;
 bool move = false;
@@ -59,7 +59,7 @@ void Motors::forward(int32_t new_hdg)
 {
     stop();
     //motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
-    motorscore.println(F("(Motors.cpp) MOTORS FORWARD"));
+    motorscore.println((char *)"(Motors.cpp) MOTORS FORWARD");
     motorstatus.setRunning(true);
 
     if (!maintain_heading)
@@ -85,7 +85,7 @@ void Motors::forward(int32_t new_hdg)
 void Motors::backwards(int32_t new_hdg)
 {
     stop();
-    motorscore.println(F("(Motors.cpp) MOTORS BACKWARDS"));
+    motorscore.println((char *)"(Motors.cpp) MOTORS BACKWARDS");
     motorstatus.setRunning(true);
 
     if (!maintain_heading)
@@ -115,21 +115,10 @@ void Motors::right(bool pivot)
     digitalWrite(MOTOR_RIGHT_DIR, BCK);
     digitalWrite(MOTOR_LEFT_DIR, FWD);
     if (!pivot)
-    {
-        motorscore.println(F("(Motors.cpp) MOTORS RIGHT"));
-        right_spd = MOT_MAX_VAL;
-        left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_RIGHT, right_spd);
-    }
+        ledcWrite(CHANNEL_RIGHT, MOT_NORM_VAL);
     else
-    {
-        motorscore.println(F("(Motors.cpp) MOTORS RIGHT (PIVOT)"));
-        right_spd = 0;
-        left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_RIGHT, right_spd);
-    }
-
-    ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
+        ledcWrite(CHANNEL_RIGHT, 0);
+    ledcWrite(CHANNEL_LEFT, MOT_NORM_VAL);
     motorstatus.setRunning(true);
     direction = 'd';
     robot_moving = true;
@@ -142,22 +131,11 @@ void Motors::left(bool pivot)
     stop();
     digitalWrite(MOTOR_RIGHT_DIR, FWD);
     digitalWrite(MOTOR_LEFT_DIR, BCK);
-    ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
+    ledcWrite(CHANNEL_RIGHT, MOT_NORM_VAL);
     if (!pivot)
-    {
-        motorscore.println(F("(Motors.cpp) MOTORS LEFT"));
-        right_spd = MOT_MAX_VAL;
-        left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_LEFT, left_spd);
-    }
+        ledcWrite(CHANNEL_LEFT, MOT_NORM_VAL);
     else
-    {
-        motorscore.println(F("(Motors.cpp) MOTORS LEFT (PIVOT)"));
-        right_spd = MOT_MAX_VAL;
-        left_spd = 0;
-        ledcWrite(CHANNEL_LEFT, left_spd);
-    }
-
+        ledcWrite(CHANNEL_LEFT, 0);
     motorstatus.setRunning(true);
     direction = 'a';
     robot_moving = true;
@@ -209,7 +187,7 @@ void Motors::maintainHeading()
         */
 
         float floatdiff = (float)diff / 100;
-        uint32_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
+        uint8_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
         //if (motor_value > MOT_MIN_VAL)
         //{
             left_spd = motor_value;
@@ -221,7 +199,7 @@ void Motors::maintainHeading()
         // SINISTRA
 
         float floatdiff = (float)diff / 100;
-        uint32_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
+        uint8_t motor_value = MOT_MIN_VAL + ((MOT_MAX_VAL - MOT_MIN_VAL) * pow((0.35777), floatdiff));
         //if (motor_value > MOT_MIN_VAL)
         //{
             right_spd = motor_value;
@@ -234,7 +212,7 @@ void Motors::maintainHeading()
     ledcWrite(CHANNEL_LEFT, left_spd);
 }
 
-void Motors::setSpeed(uint32_t spd, uint32_t motor)
+void Motors::setSpeed(uint8_t spd, uint8_t motor)
 {
     if (motor == RIGHT)
         right_spd = spd;
@@ -270,7 +248,7 @@ void Motors::playStartSound()
     mainmotor.playsound.active = true;
 }
 
-bool Motors::toggleMainMotor(uint32_t spd, uint32_t stat)
+bool Motors::toggleMainMotor(uint8_t spd, uint8_t stat)
 {
     if (stat == TOGGLE)
     {

@@ -23,6 +23,9 @@ uint32_t sens_refresh_time = millis();
 uint32_t inactivity_count = 0;
 uint64_t *sensor_packetptr;
 
+int32_t accX = 0;
+int32_t accY = 0;
+int32_t accZ = 0;
 float yaw = 0;
 float pitch = 0;
 float roll = 0;
@@ -44,19 +47,16 @@ struct SetZero
 {
     bool active = false;
     uint8_t arr_idx = 0;
-    int32_t arrYaw[500] {};
-    int32_t arrPitch[500] = {};
-    int32_t arrRoll[500] = {};
-    int32_t old_yaw = 0;
-    int32_t zero_yaw = 0;
-    int32_t zero_pitch = 0;
-    int32_t zero_roll = 0;
-    int32_t max_yaw = 0;
-    int32_t max_pitch = 0;
-    int32_t max_roll = 0;
-    int32_t min_yaw = 0;
-    int32_t min_pitch = 0;
-    int32_t min_roll = 0;
+    int32_t arrX[50] = {};
+    int32_t arrY[50] = {};
+    int32_t arrZ[50] = {};
+    int32_t old_accX = 0;
+    int32_t maxX = 0;
+    int32_t maxY = 0;
+    int32_t maxZ = 0;
+    int32_t minX = 0;
+    int32_t minY = 0;
+    int32_t minZ = 0;
 };
 
 struct SensorPacket
@@ -69,7 +69,6 @@ struct SensorPacket
         uint64_t ir_f = 0;
         uint64_t ir_l = 0;
         bool check_next_dst = false;
-        uint64_t check_dst_packet = 0;
     } obstacle;
 
     struct
@@ -101,7 +100,7 @@ Sensors::Robot robot;
 void Sensors::begin()
 {
     Wire.begin();
-    Wire.setClock(800000L);
+    Wire.setClock(400000L);
     sensorcore.print(F("(Sensors) Initializing MPU6050,"));
     if (mpu.begin() == 0)
     {
@@ -211,53 +210,38 @@ void Sensors::update()
 
         if (senspacket.info.id > senspacket.info.last_id)
         {
-            if (senspacket.obstacle.us_f < US_SENS_DST_TRIG && senspacket.obstacle.us_f != 0)
+            if (senspacket.obstacle.us_f < US_SENS_DST_TRIG)
             {
                 if (!senspacket.obstacle.check_next_dst)
-                {
-                    senspacket.obstacle.check_dst_packet = senspacket.info.id;
                     senspacket.obstacle.check_next_dst = true;
-                }
-                else if (senspacket.info.id == senspacket.obstacle.check_dst_packet + 1)
+                else
                 {
                     senspacket.obstacle.check_next_dst = false;
                     sensorcore.println(F("(Sensors.cpp) US FRONT STOP"));
                     sensornav.obstacleDetectedWhileMoving(ULTRASONIC, FRONT);
                 }
-                else
-                    senspacket.obstacle.check_next_dst = false;
             }
-            else if (senspacket.obstacle.us_l < US_SENS_DST_TRIG && senspacket.obstacle.us_l != 0)
+            else if (senspacket.obstacle.us_l < US_SENS_DST_TRIG)
             {
                 if (!senspacket.obstacle.check_next_dst)
-                {
-                    senspacket.obstacle.check_dst_packet = senspacket.info.id;
                     senspacket.obstacle.check_next_dst = true;
-                }
-                else if (senspacket.info.id == senspacket.obstacle.check_dst_packet + 1)
+                else
                 {
                     senspacket.obstacle.check_next_dst = false;
                     sensorcore.println(F("(Sensors.cpp) US LEFT STOP"));
                     sensornav.obstacleDetectedWhileMoving(ULTRASONIC, LEFT);
                 }
-                else
-                    senspacket.obstacle.check_next_dst = false;
             }
-            else if (senspacket.obstacle.us_r < US_SENS_DST_TRIG && senspacket.obstacle.us_r != 0)
+            else if (senspacket.obstacle.us_r < US_SENS_DST_TRIG)
             {
                 if (!senspacket.obstacle.check_next_dst)
-                {
-                    senspacket.obstacle.check_dst_packet = senspacket.info.id;
                     senspacket.obstacle.check_next_dst = true;
-                }
-                else if (senspacket.info.id == senspacket.obstacle.check_dst_packet + 1)
+                else
                 {
                     senspacket.obstacle.check_next_dst = false;
                     sensorcore.println(F("(Sensors.cpp) US RIGHT STOP"));
                     sensornav.obstacleDetectedWhileMoving(ULTRASONIC, RIGHT);
                 }
-                else
-                    senspacket.obstacle.check_next_dst = false;
             }
 
             senspacket.bat.n_values++;
@@ -293,11 +277,9 @@ void Sensors::update()
 
         if (ENABLE_SPD_SENSORS)
         {
-            if (robot.enable_speed_encoders)
+            if (direction == 'w' || direction == 's')
             {
-                delay(1);
                 getEncoderRightAngle();
-                delay(1);
                 getEncoderLeftAngle();
                 if (robot.first_iteration_ignored)
                 {
@@ -332,42 +314,67 @@ void Sensors::getValues()
     yaw = mpu.getAngleZ();
     pitch = mpu.getAngleY();
     roll = mpu.getAngleX();
+    accX = mpu.getAccX();
+    accY = mpu.getAccY();
+    accZ = mpu.getAccZ();
+}
+
+int Sensors::getAccX()
+{
+    getValues();
+    if (INVERT_ACC_X)
+        accX *= -1;
+    return accX;
+}
+
+int Sensors::getAccY()
+{
+    getValues();
+    if (INVERT_ACC_Y)
+        accY *= -1;
+    return accY;
+}
+
+int Sensors::getAccZ()
+{
+    getValues();
+    if (INVERT_ACC_Z)
+        accZ *= -1;
+    return accZ;
 }
 
 int32_t Sensors::getRoll()
 {
     getValues();
     if (INVERT_ROLL)
-        roll *= -1;
-    return roll * 100;
+        roll *= -100;
+    return roll;
 }
 
 int32_t Sensors::getPitch()
 {
     getValues();
     if (INVERT_PITCH)
-        pitch *= -1;
-    return pitch * 100;
+        pitch *= -100;
+    return pitch;
 }
 
 int32_t Sensors::getHeading()
 {
     getValues();
     if (INVERT_YAW)
-        yaw *= -1;
-    return yaw * 100;
+        yaw *= -100;
+    return yaw;
 }
 
 void Sensors::resetMovementVars()
 {
-    robot.enable_speed_encoders = false;
     senspacket.info.is_polling = false;
     sensormux.sensPacketUpdate(false);
 }
 
 void Sensors::setMotorsStop()
 {
-    robot.enable_speed_encoders = false;
     robot.first_iteration_ignored = false;
 }
 
@@ -479,19 +486,4 @@ int64_t Sensors::convert360To180HDG(int64_t hdg, bool always_positive)
             return hdg - 36000;
     else
         return hdg;
-}
-
-void Sensors::startSensorPolling()
-{
-    if (!senspacket.info.is_polling)
-    {
-        sensorserial.println("STARTING POLLING");
-        senspacket.info.is_polling = true;
-        sensormux.sensPacketUpdate(true);
-    }
-}
-
-void Sensors::enableSpeedEncoders()
-{
-    robot.enable_speed_encoders = true;
 }

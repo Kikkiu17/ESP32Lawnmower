@@ -45,7 +45,7 @@ class Motors
          * @param speed Velocità (0-255)
          * @param motor Motore selezionato. Può essere: RIGHT, LEFT, BOTH, MAIN
          */
-        void setSpeed(uint32_t speed, uint32_t motor);
+        void setSpeed(uint8_t speed, uint8_t motor);
 
         void playStartSound();
 
@@ -57,7 +57,7 @@ class Motors
          * @return true se il motore è acceso
          * @return false se il motore è spento
          */
-        bool toggleMainMotor(uint32_t spd = 100, uint32_t motor_status = TOGGLE);
+        bool toggleMainMotor(uint8_t spd = 100, uint8_t motor_status = TOGGLE);
 
         int32_t getHeadingToMaintain();
 

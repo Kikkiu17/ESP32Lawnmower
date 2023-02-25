@@ -27,10 +27,10 @@ static StaticQueue_t ReadDigitalStaticQueue;
 static StaticQueue_t ReadAnalogStaticQueue;
 static StaticQueue_t PulseInStaticQueue;
 
-uint8_t TaskManagerArray[100];
-uint8_t ReadDigitalArray[100];
-uint8_t ReadAnalogArray[100];
-uint8_t PulseInArray[100];
+uint8_t TaskManagerArray[50];
+uint8_t ReadDigitalArray[50];
+uint8_t ReadAnalogArray[50];
+uint8_t PulseInArray[50];
 
 bool pulsein_returned = false;
 bool execute_once = false;
@@ -38,8 +38,8 @@ bool signal_low = false;
 bool rising_edge = false;
 bool got_reading = false;
 bool stop = false;
-int64_t start_US_time = 0;
-int64_t stop_US_time = 0;
+uint64_t start_US_time = 0;
+uint64_t stop_US_time = 0;
 
 bool sens_packet_stopped = false;
 
@@ -149,7 +149,7 @@ void IRAM_ATTR PulseInFunction(void *param)
                 digitalWrite(MUX2, channels[USData.read][1]);
                 digitalWrite(MUX3, channels[USData.read][0]);
                 stop_US_time = esp_timer_get_time();
-                if (stop_US_time - start_US_time > US_SENS_DST_TRIG + 50 || analogRead(MUX_COM) < 2046)
+                if (stop_US_time - start_US_time > US_SENS_DST_TRIG+50 || analogRead(MUX_COM) < 2046)
                 {
                     uint64_t diff = stop_US_time - start_US_time;
                     execute_once = false;
@@ -167,8 +167,12 @@ void IRAM_ATTR PulseInFunction(void *param)
             }
         }
 
-        if (watchdog_counter > 50)
+        if (watchdog_counter > 200)
         {
+            Serial.println("(Mux.cpp) WATCHDOG COUNTER TRIGGERED - CURRENT CHANNELS: ");
+            Serial.println(USData.write);
+            Serial.println(USData.read);
+            Serial.println("RESETTING VALUES");
             execute_once = false;
             signal_low = false;
             rising_edge = false;

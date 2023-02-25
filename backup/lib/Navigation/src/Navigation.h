@@ -15,7 +15,7 @@ class NAV
         struct CommandQueue
         {
             bool busy = false;
-            std::vector<uint32_t> commands;
+            std::vector<uint8_t> commands;
             std::vector<int32_t> data;
         };
 
@@ -26,7 +26,7 @@ class NAV
         // Ruota per un certo numero di gradi usando la ruota interna alla rotazione come perno
         void rotateForPivot(int32_t degs);
         // Ruota fino a un certo heading, con la direzione di rotazione specificata
-        void rotateToDeg(uint32_t heading, uint32_t direction);
+        void rotateToDeg(uint32_t heading, char direction);
         /**
          * Va avanti per la distanza specificata
          *
@@ -47,14 +47,14 @@ class NAV
          * @param sensor_type Tipo di sensore. Può essere: INFRARED, ULTRASONIC
          * @param sensor_direction Direzione del sensore. Può essere: LEFT, FRONT, RIGHT
          */
-        void obstacleDetectedWhileMoving(uint32_t sensor_type, uint32_t sensor_direction);
+        void obstacleDetectedWhileMoving(uint8_t sensor_type, uint8_t sensor_direction);
         /**
          * @brief Imposta la flag "obstacle_detected_before_moving" (solo se il robot partiva da fermo)
          *
          * @param sensor_type Tipo di sensore. Può essere: INFRARED, ULTRASONIC
          * @param sensor_direction Direzione del sensore. Può essere: LEFT, FRONT, RIGHT
          */
-        void obstacleDetectedBeforeMoving(uint32_t sensor_type, uint32_t sensor_direction);
+        void obstacleDetectedBeforeMoving(uint8_t sensor_type, uint8_t sensor_direction);
         // Resetta le variabili (stop da seriale)
         void externalStop();
         // Deprecato
@@ -140,17 +140,12 @@ class NAV
          */
         int32_t convertHDGTo180(uint32_t heading, bool always_positive = false);
 
-        /**
-         * @brief Es: angle1 = 1, angle2 = 3 -> diff: -2; uguale all'inverso
-        */
-        int32_t getRealAngleDiff(int32_t angle1, int32_t angle2);
-
     private:
         void resetMovementVars();
         // Restituisce HDG virtuale (0-35999)
         float getVirtualHDG(int32_t heading);
         // Restituisce la direzione in cui il robot deve ruotare
-        uint32_t getRotationDirection(uint32_t current_heading, int32_t target_heading_180);
+        char getRotationDirection(uint32_t current_heading, int32_t target_heading_180);
 
         /**
          * @brief Ruota fino a che la variabile non soddisfi la condizione specificata (bool)
@@ -165,7 +160,7 @@ class NAV
          * Ferma il robot e reimposta solo le variabili di movimento principali (going fwd/bck, robot moving, rotating, dst traveled)
          * 
          */
-        void stop(bool clear_command_queues = true);
+        void stop(bool clear_command_queue = true);
 
         /**
          * Aggiunge un certo valore ai vettori di distanza percorsa attuali e li restituisce senza modificarli effettivamente
@@ -232,14 +227,14 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getTopPoint(uint32_t axis);
+        std::tuple<uint32_t, uint32_t, int32_t> getTopPoint(uint8_t axis);
         /**
          * Ottiene il punto con valore X o Y più basso
          *
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getBottomPoint(uint32_t axis = X);
+        std::tuple<uint32_t, uint32_t, int32_t> getBottomPoint(uint8_t axis = X);
         /**
          * Ottiene il punto con valore X o Y più alto nel blocco specificato
          *
@@ -247,7 +242,7 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getTopPointOf(uint32_t block, uint32_t axis);
+        std::tuple<uint32_t, uint32_t, int32_t> getTopPointOf(uint32_t block, uint8_t axis);
         /**
          * Ottiene il punto con valore X o Y più basso nel blocco specificato
          *
@@ -255,7 +250,7 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getBottomPointOf(uint32_t block, uint32_t axis);
+        std::tuple<uint32_t, uint32_t, int32_t> getBottomPointOf(uint32_t block, uint8_t axis);
 
         std::tuple<int32_t, int32_t> getPointXY(uint32_t block, uint32_t point_idx);
 
@@ -299,15 +294,10 @@ class NAV
          */
         uint32_t invert180HDG(int32_t heading);
 
-        uint32_t getMeanDiff(uint32_t block, uint32_t axis);
+        uint32_t getMeanDiff(uint32_t block, uint8_t axis);
 
-        void addToCommandQueue(uint32_t cmd, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
-        void addToCommandQueue(std::vector<uint32_t> *cmds, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
-        /**
-         * @brief Elimina il numero specificato di comandi (e i relativi dati) da una coda.
-         * L'eliminazione parte dall'inizio del vettore (vector::begin())
-        */
-        void clearQueue(CommandQueue *queue, uint32_t items_to_delete = ALL);
+        void addToCommandQueue(uint8_t cmd, std::vector<int32_t> data, CommandQueue *queue, bool push_forward = false);
+        void addToCommandQueue(std::vector<uint8_t> cmds, std::vector<int32_t> data, CommandQueue *queue, bool push_forward = false);
 
         void displayQueue(CommandQueue *queue);
 
@@ -318,7 +308,7 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t, int32_t> - idx blocco, idx punto, x punto, y punto
          */
-        std::tuple<uint32_t, uint32_t, int32_t, int32_t> getTopPointWith(int32_t coordinate, uint32_t given_coordinate_axis);
+        std::tuple<uint32_t, uint32_t, int32_t, int32_t> getTopPointWith(int32_t coordinate, uint8_t given_coordinate_axis);
 
         /**
          * Ottiene il punto con valore X o Y più basso con X o Y specificato.
@@ -327,9 +317,9 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t, int32_t> - idx blocco, idx punto, x punto, y punto
          */
-        std::tuple<uint32_t, uint32_t, int32_t, int32_t> getBottomPointWith(int32_t coordinate, uint32_t given_coordinate_axis);
+        std::tuple<uint32_t, uint32_t, int32_t, int32_t> getBottomPointWith(int32_t coordinate, uint8_t given_coordinate_axis);
 
-        uint32_t getBlockContaining(int32_t coordinate, uint32_t axis);
+        uint32_t getBlockContaining(int32_t coordinate, uint8_t axis);
 };
 
 #endif

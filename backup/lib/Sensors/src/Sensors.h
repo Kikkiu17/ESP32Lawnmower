@@ -52,11 +52,7 @@ class Sensors
                 float traveled_distance = 0;
                 float last_traveled_distance = 0;
                 bool first_iteration_ignored = false;
-                bool enable_speed_encoders = 0;
         };
-
-        void startSensorPolling();
-        void enableSpeedEncoders();
 
     private:
         void getValues();

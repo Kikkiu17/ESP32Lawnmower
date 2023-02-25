@@ -71,7 +71,7 @@
 /* #endregion */
 
 /* #region  Navigation.cpp */
-#define MPU_SPD_SENSORS_REFRESH_RATE 1  // ms
+#define MPU_SPD_SENSORS_REFRESH_RATE 3  // ms
 #define ENABLE_AUTO_NAVIGATION true     // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_SPD_SENSORS abilitati
 #define ENABLE_ROTATION_SENSING true    // ferma il robot quando l'heading target viene raggiunto
 #define ENABLE_ROTATION_LOOP true       // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
@@ -109,23 +109,20 @@
 #define STOP 13
 #define TOGGLE 14
 #define NOT_FOUND 2147483646
-#define MAX_CM 2147483646
+#define MAX_CM UINT32_MAX
 // mappa
 #define ACCESSIBLE 0
 // mappa
 #define OBSTACLE 1
 // mappa
 #define BORDER 2
-#define AUTO 2147748
-#define NONE 2147749
-#define ALL 2147750
+#define AUTO 2147483647
 /* #endregion */
 
-#define SHOW_MODULE_EXECUTION_TIME false
-#define SHOW_HEAP_INFO false                // viene considerato solo se SHOW_MODULE_EXECUTION_TIME è true
+#define SHOW_MODULE_EXECUTION_TIME true
+#define SHOW_HEAP_INFO true                // viene considerato solo se SHOW_MODULE_EXECUTION_TIME è true
 #define MODULE_EXECUTION_TIME_REFRESH 250   // ms
 #define ENABLE_LOGGING                      // commentare per disabilitare il logging delle informazioni nella porta seriale
-#define USE_SD true
 
 // per aumentare stack size loopTask (ora a 16384 byte) vedere \.platformio\packages\framework-arduinoespressif32\tools\sdk\include\config\sdkconfig.h
 #endif
