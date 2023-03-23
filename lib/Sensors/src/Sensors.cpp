@@ -1,23 +1,26 @@
-#include <Sensors.h>
 #include <SPI.h>
 #include "Wire.h"
+#include <MPU6050_light.h>
+#include <WebSerial.h>
+// librerie custom
+#include <AS5600.h>
+#include <Sensors.h>
 #include <Status.h>
 #include <Motors.h>
 #include <Core.h>
 #include <Navigation.h>
-#include <BluetoothSerial.h>
 #include <Mux.h>
-#include <AS5600.h>
-#include <MPU6050_light.h>
 
-AS5600 encoder;
+// l'mpu e l'encoder sinistro usano entrambi il bus 0 (sda 11, scl 12) anche se sulla pcb dovrebbero usare bus diversi (sistemato in rev3)
+// questo perché l'esp32s3 ha solo 2 bus I2C quindi non potrebbe gestire tutte e 3 le periferiche
+AS5600* encleft = new AS5600(11, 12, 0);
+AS5600* encright = new AS5600(9, 10, 1);
+MPU6050 mpu = MPU6050(Wire);
 Motors sensormotors;
 Core sensorcore;
 NAV sensornav;
-BluetoothSerial sensorserial;
 Mux sensormux;
 uint64_t t2 = 0;
-MPU6050 mpu(Wire);
 
 uint32_t sens_refresh_time = millis();
 uint32_t inactivity_count = 0;
@@ -100,8 +103,36 @@ Sensors::Robot robot;
 
 void Sensors::begin()
 {
-    Wire.begin();
     Wire.setClock(800000L);
+    Wire1.setClock(800000L);
+    if (encleft->isMagnetDetected())
+    {
+        sensorcore.print(F("(Sensors) LEFT Magnet detected,"));
+        if (!encleft->isMagnetTooStrong())
+            if (!encleft->isMagnetTooWeak())
+                sensorcore.println(F(" OK"));
+            else
+                sensorcore.println(F(" TOO WEAK"));
+        else
+            sensorcore.println(F(" TOO STRONG"));
+    }
+    else
+        sensorcore.println(F("(Sensors) LEFT Magnet NOT DETECTED! Positioning not available!"));
+
+    if (encright->isMagnetDetected())
+    {
+        sensorcore.print(F("(Sensors) RIGHT Magnet detected,"));
+        if (!encright->isMagnetTooStrong())
+            if (!encright->isMagnetTooWeak())
+                sensorcore.println(F(" OK"));
+            else
+                sensorcore.println(F(" TOO WEAK"));
+        else
+            sensorcore.println(F(" TOO STRONG"));
+    }
+    else
+        sensorcore.println(F("(Sensors) RIGHT Magnet NOT DETECTED! Positioning not available!"));
+
     sensorcore.print(F("(Sensors) Initializing MPU6050,"));
     if (mpu.begin() == 0)
     {
@@ -109,43 +140,10 @@ void Sensors::begin()
         sensorcore.print(F("(Sensors) Calibrating accelerometer / gyro,"));
         mpu.calcOffsets(true, true);
         sensorcore.println(F(" OK"));
-        pinMode(INTERRUPT_PIN, INPUT);
-        pinMode(LEFT_SPD_SENS, OUTPUT);
-        pinMode(RIGHT_SPD_SENS, OUTPUT);
         sensor_packetptr = sensormux.getPacketPointer();
     }
     else
         sensorcore.println(F(" CANNOT INITIALIZE MPU!"));
-
-    selectEncoderLeft();
-    if (encoder.isMagnetDetected())
-    {
-        sensorcore.print(F("(Sensors) LEFT Magnet detected,"));
-        if (!encoder.isMagnetTooStrong())
-            if (!encoder.isMagnetTooWeak())
-                sensorcore.println(F(" OK"));
-            else
-                sensorcore.println(F(" TOO WEAK"));
-        else
-            sensorcore.println(F(" TOO STRONG"));
-    }
-    else
-        sensorcore.println(F("(Sensors) LEFT Magnet NOT DETECTED! Do not use positioning!"));
-
-    selectEncoderRight();
-    if (encoder.isMagnetDetected())
-    {
-        sensorcore.print(F("(Sensors) RIGHT Magnet detected,"));
-        if (!encoder.isMagnetTooStrong())
-            if (!encoder.isMagnetTooWeak())
-                sensorcore.println(F(" OK"));
-            else
-                sensorcore.println(F(" TOO WEAK"));
-        else
-            sensorcore.println(F(" TOO STRONG"));
-    }
-    else
-        sensorcore.println(F("(Sensors) RIGHT Magnet NOT DETECTED! Do not use positioning!"));
 }
 
 uint32_t TEMP_TIME = 0;
@@ -197,7 +195,7 @@ void Sensors::update()
     }
 
     // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
-    if (senspacket.info.is_polling)
+    if (senspacket.info.is_polling && ENABLE_OBSTACLE_AVOIDANCE)
     {
         senspacket.obstacle.us_f = *(sensor_packetptr);
         senspacket.obstacle.us_l = *(sensor_packetptr + 1);
@@ -285,7 +283,7 @@ void Sensors::update()
         {
             if (!senspacket.info.is_polling)
             {
-                sensorserial.println("STARTING POLLING");
+                WebSerial.println("STARTING POLLING");
                 senspacket.info.is_polling = true;
                 sensormux.sensPacketUpdate(true);
             }
@@ -389,13 +387,9 @@ void Sensors::resetTraveledDistance()
 
 void Sensors::getEncoderLeftAngle()
 {
-    digitalWrite(RIGHT_SPD_SENS, LOW);
-    delayMicroseconds(1);
-    digitalWrite(LEFT_SPD_SENS, HIGH);
-    delayMicroseconds(15);
     leftEncoder.last_read_time = leftEncoder.read_time;
     leftEncoder.last_scaled_angle = leftEncoder.scaled_angle;
-    leftEncoder.scaled_angle = (int64_t)(encoder.getScaledAngle() * 100);
+    leftEncoder.scaled_angle = (int64_t)(encleft->getScaledAngle() * 100);
     leftEncoder.read_time = millis();
     if (abs(leftEncoder.last_scaled_angle - leftEncoder.scaled_angle) > 18000)
     {
@@ -418,13 +412,9 @@ void Sensors::getEncoderLeftAngle()
 
 void Sensors::getEncoderRightAngle()
 {
-    digitalWrite(LEFT_SPD_SENS, LOW);
-    delayMicroseconds(1);
-    digitalWrite(RIGHT_SPD_SENS, HIGH);
-    delayMicroseconds(15);
     rightEncoder.last_read_time = rightEncoder.read_time;
     rightEncoder.last_scaled_angle = rightEncoder.scaled_angle;
-    rightEncoder.scaled_angle = (int64_t)(encoder.getScaledAngle() * 100);
+    rightEncoder.scaled_angle = (int64_t)(encright->getScaledAngle() * 100);
     rightEncoder.read_time = millis();
     if (abs(rightEncoder.last_scaled_angle - rightEncoder.scaled_angle) > 18000)
     {
@@ -443,22 +433,6 @@ void Sensors::getEncoderRightAngle()
 
     rightEncoder.diff = diff;
     rightEncoder.total_angle += diff;
-}
-
-const void Sensors::selectEncoderLeft()
-{
-    digitalWrite(RIGHT_SPD_SENS, LOW);
-    delayMicroseconds(10);
-    digitalWrite(LEFT_SPD_SENS, HIGH);
-    delayMicroseconds(10);
-}
-
-const void Sensors::selectEncoderRight()
-{
-    digitalWrite(LEFT_SPD_SENS, LOW);
-    delayMicroseconds(10);
-    digitalWrite(RIGHT_SPD_SENS, HIGH);
-    delayMicroseconds(10);
 }
 
 int64_t Sensors::invert180HDG(int64_t hdg)
@@ -485,13 +459,13 @@ void Sensors::startSensorPolling()
 {
     if (!senspacket.info.is_polling)
     {
-        sensorserial.println("STARTING POLLING");
+        WebSerial.println("STARTING POLLING");
         senspacket.info.is_polling = true;
         sensormux.sensPacketUpdate(true);
     }
 }
 
-void Sensors::enableSpeedEncoders()
+void Sensors::enablePositionEncoders()
 {
     robot.enable_speed_encoders = true;
 }

@@ -100,7 +100,7 @@ class NAV
         uint32_t invertHDG(uint32_t heading);
         void motorStall();
         void mapBorderMode(bool on_off = false);
-        void sdspeedtest();
+        void sdspeedtest(uint32_t bytes);
         void eraseSD(const char *path);
         // blocco iniziale: 1
         void readBlock(uint32_t block);
@@ -144,6 +144,8 @@ class NAV
          * @brief Es: angle1 = 1, angle2 = 3 -> diff: -2; uguale all'inverso
         */
         int32_t getRealAngleDiff(int32_t angle1, int32_t angle2);
+
+        void fillXBytes(uint32_t bytes);
 
     private:
         void resetMovementVars();
@@ -301,6 +303,8 @@ class NAV
 
         uint32_t getMeanDiff(uint32_t block, uint32_t axis);
 
+        // se higher_priority è true, inserisce comandi e dati (nell'ordine dato) prima dei contenuti della coda, spostando quindi questi ultimi dietro ai nuovi comandi.
+        // es: lista: COMANDO1, COMANDO2, COMANDO3 - da inserire: COMANDO4, COMANDO 5 - lista finale: COMANDO4, COMANDO5, COMANDO1, COMANDO2, COMANDO3
         void addToCommandQueue(uint32_t cmd, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
         void addToCommandQueue(std::vector<uint32_t> *cmds, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
         /**

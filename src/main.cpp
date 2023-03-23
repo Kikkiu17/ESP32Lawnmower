@@ -5,38 +5,38 @@
 #include <Status.h>
 #include <Core.h>
 #include <SETTINGS.h>
-#include <BluetoothSerial.h>
 #include <limits.h>
 #include <Mux.h>
 
-#if !USE_SD
+//#if !USE_SD
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
 #include "wifi_creds.h"
 
-AsyncWebServer server(80);
+AsyncWebServer server(80); 
 WifiCredentials wificreds;
-#endif
+//#endif
 
-BluetoothSerial SerialBT;
 Motors robotmotors;
-Sensors robotsensors;
-Status robotstatus;
 Core core;
-NAV robotnav;
-Mux robotmux;
 
-bool status_led = false;
+bool err_led = false;
+bool run_led = true;
 
 void setup()
 {
   Serial.begin(115200);
-  SerialBT.begin("ESP32ROBOT");
+
+  robotmotors.begin();
+  robotmotors.playInitSound();
+
+  pinMode(ERROR_LED, OUTPUT);
+  pinMode(RUNNING_LED, OUTPUT);
 
   /* #region  WiFi, ElegantOTA */
-  #if (!USE_SD)
+  //#if (!USE_SD)
   WiFi.mode(WIFI_STA);
   WiFi.begin(wificreds.ssid, wificreds.password);
 
@@ -45,9 +45,10 @@ void setup()
     delay(500);
     Serial.print(".");
     // fa lampeggiare i led
-    status_led = !status_led;
-    digitalWrite(ERROR_LED, status_led);
-    digitalWrite(RUNNING_LED, status_led);
+    err_led = !err_led;
+    run_led = !run_led;
+    digitalWrite(ERROR_LED, err_led);
+    digitalWrite(RUNNING_LED, run_led);
   }
 
   Serial.println("");
@@ -60,8 +61,9 @@ void setup()
             { request->send(200, "text/plain", "Hi! I am ESP32."); });
 
   AsyncElegantOTA.begin(&server);
+  //WebSerial.begin(&server);
   server.begin();
-  #endif
+  //#endif
   /* #endregion */
 
   core.begin();

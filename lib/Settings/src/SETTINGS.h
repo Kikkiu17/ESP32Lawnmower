@@ -5,28 +5,21 @@
 #define USING_USB_SERIAL true
 
 /* #region  Pin diretti ESP */
-#define RPM_SENS 5
-
-#define RUNNING_LED 12
-#define ERROR_LED 14
+#define RUNNING_LED 18
+#define ERROR_LED 8
 
 // HIGH: FWD, LOW: BCK
-#define MOTOR_RIGHT_DIR 27
-#define MOTOR_LEFT_DIR 26
-#define MOT_R_SPD 25
-#define MOT_L_SPD 33
-#define MOT_MAIN 19
+#define MOT_R_CTRL1 48
+#define MOT_R_CTRL2 45
+#define MOT_L_CTRL1 21
+#define MOT_L_CTRL2 47
+#define MOT_MAIN 13
 
-// Sensori velocità
-#define LEFT_SPD_SENS 5
-#define RIGHT_SPD_SENS 13
-
-#define MUX_COM 32
-#define MUX0 16
-#define MUX1 4
-#define MUX2 0
-#define MUX3 2
-#define INTERRUPT_PIN 34
+#define MUX_COM 3
+#define MUX0 38
+#define MUX1 37
+#define MUX2 36
+#define MUX3 35
 // #define MUX_ENABLE 17 - NC in PCB
 /* #endregion */
 
@@ -64,7 +57,7 @@
 /* #endregion */
 
 /* #region  Sensors.cpp */
-#define ENABLE_OBSTACLE_AVOIDANCE true
+#define ENABLE_OBSTACLE_AVOIDANCE false
 #define ENABLE_MOVEMENT_SENSORS false
 #define ENABLE_SPD_SENSORS true
 #define ENABLE_BAT_VOLTAGE_SENSING false
@@ -74,7 +67,7 @@
 #define MPU_SPD_SENSORS_REFRESH_RATE 1  // ms
 #define ENABLE_AUTO_NAVIGATION true     // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_SPD_SENSORS abilitati
 #define ENABLE_ROTATION_SENSING true    // ferma il robot quando l'heading target viene raggiunto
-#define ENABLE_ROTATION_LOOP true       // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
+#define ENABLE_ROTATION_LOOP false      // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
 #define LOG_OBSTACLES_TO_MAP false
 #define LOG_MAP false
 #define MAP_POINT_PROXIMITY_DST 200     // mm
@@ -82,16 +75,18 @@
 
 /* #region  Nomi costanti codice */
 #define FORWARD_NO_VARIABLE_UPDATE 1 // default: 0 = forward normale
-#define CHANNEL_LEFT 1
-#define CHANNEL_RIGHT 2
-#define CHANNEL_MAIN 3
+#define CH_R1 1
+#define CH_R2 2
+#define CH_L1 3
+#define CH_L2 4
+#define CHANNEL_MAIN 5
 #define FWD 0
 #define BCK 1
-#define MOT_MAX_VAL 255
-#define MOT_NORM_VAL 200
-#define MOT_MIN_VAL 50
+#define MOT_MAX_VAL 4095
+#define MOT_NORM_VAL 2048
+#define MOT_MIN_VAL 2048
 #define MOVEMENT_MOT_FREQ 50
-#define MAIN_MOT_FREQ 150
+#define MAIN_MOT_FREQ 2000
 #define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
 #define GLOBAL_NAV_DELAY 150
 #define FRONT 0

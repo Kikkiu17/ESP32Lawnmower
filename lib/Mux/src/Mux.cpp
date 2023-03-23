@@ -1,5 +1,4 @@
 #include <MUX.h>
-#include <BluetoothSerial.h>
 #include <SETTINGS.h>
 #include <Sensors.h>
 #include <Core.h>
@@ -463,10 +462,10 @@ void Mux::begin()
     ReadDigitalQueue = xQueueCreateStatic(20, sizeof(uint32_t), ReadDigitalArray, &ReadDigitalStaticQueue);
     ReadAnalogQueue = xQueueCreateStatic(20, sizeof(uint32_t), ReadAnalogArray, &ReadAnalogStaticQueue);
     PulseInQueue = xQueueCreateStatic(20, sizeof(uint32_t), PulseInArray, &PulseInStaticQueue);
-    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 1024, NULL, 5, &PulseInHandle, 0);
-    xTaskCreatePinnedToCore(ReadDigitalFunction, "ReadDigital", 1024, NULL, 2, &ReadDigitalHandle, 0);
-    xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 1024, NULL, 2, &ReadAnalogHandle, 0);
-    xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 1024, NULL, 10, &TaskManagerHandle, 0);
+    xTaskCreatePinnedToCore(PulseInFunction, "PulseIn", 2048, NULL, 5, &PulseInHandle, 0);
+    xTaskCreatePinnedToCore(ReadDigitalFunction, "ReadDigital", 2048, NULL, 2, &ReadDigitalHandle, 0);
+    xTaskCreatePinnedToCore(ReadAnalogFunction, "ReadAnalog", 2048, NULL, 2, &ReadAnalogHandle, 0);
+    xTaskCreatePinnedToCore(TaskManagerFunction, "TaskManager", 2048, NULL, 10, &TaskManagerHandle, 0);
 
     /*muxcore.println("PulseIn heap", uxTaskGetStackHighWaterMark(PulseInHandle));
     muxcore.println("ReadDigital heap", uxTaskGetStackHighWaterMark(ReadDigitalHandle));

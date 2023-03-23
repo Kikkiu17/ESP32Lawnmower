@@ -1,7 +1,6 @@
 #include <Motors.h>
 #include <Sensors.h>
 #include <Status.h>
-#include <BluetoothSerial.h>
 #include <Core.h>
 #include <Navigation.h>
 #include <Mux.h>
@@ -16,22 +15,39 @@ struct MainMotor
     struct
     {
         bool active = false;
-        uint32_t note_n = 0;
         uint32_t time = 0;
-    } playsound;
-
-    struct
-    {
-        bool active = false;
-        uint32_t time = 0;
-        uint16_t speed = 0;
-        uint16_t speed_target = 0;
+        uint32_t speed = 600;
+        uint32_t speed_target = 0;
     } startup;
 
     bool active = false;
 };
 
+class Note
+{
+    public:
+        uint32_t freq = 0;
+        uint32_t duration = 0;
+        uint32_t intensity = 0;   // valore standard: 1815
+        Note(uint32_t infreq, uint32_t induration, uint32_t inintensity = 800)
+        {
+            freq = infreq;
+            duration = induration;
+            intensity = inintensity;
+        }
+};
+
+class SoundPlayer
+{
+    public:
+        std::vector<Note>* notes = new std::vector<Note>();
+        uint32_t time1 = 0;
+        uint32_t time2 = 0;
+        bool busy = false;
+};
+
 MainMotor mainmotor;
+SoundPlayer* sp = new SoundPlayer();
 
 const float wheel_circumference = WHEEL_DIAMETER * 3.14;
 const float wheel_encoder_ratio = WHEEL_DIAMETER / ENCODER_DIAMETER;
@@ -49,6 +65,8 @@ bool reverse_heading = false;
 uint32_t time_1 = millis();
 uint32_t time_2 = millis();
 uint32_t time_wait = millis();
+uint32_t direc = FWD;
+bool ispivoting = false;
 
 uint32_t Motors::getTime()
 {
@@ -66,10 +84,10 @@ void Motors::forward(int32_t new_hdg)
     {
         left_spd = MOT_MAX_VAL;
         right_spd = MOT_MAX_VAL;
-        digitalWrite(MOTOR_RIGHT_DIR, FWD);
-        digitalWrite(MOTOR_LEFT_DIR, FWD);
-        ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
-        ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, MOT_MAX_VAL);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, MOT_MAX_VAL);
         if (new_hdg != AUTO)
             heading_to_maintain = new_hdg;
         else
@@ -79,6 +97,8 @@ void Motors::forward(int32_t new_hdg)
         reverse_heading = false;
     }
 
+    ispivoting = false;
+    direc = BCK;
     direction = 'w';
 }
 
@@ -92,10 +112,10 @@ void Motors::backwards(int32_t new_hdg)
     {
         left_spd = MOT_MAX_VAL;
         right_spd = MOT_MAX_VAL;
-        digitalWrite(MOTOR_RIGHT_DIR, BCK);
-        digitalWrite(MOTOR_LEFT_DIR, BCK);
-        ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
-        ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
+        ledcWrite(CH_R1, MOT_MAX_VAL);
+        ledcWrite(CH_R2, 0);
+        ledcWrite(CH_L1, MOT_MAX_VAL);
+        ledcWrite(CH_L2, 0);
         if (new_hdg != AUTO)
             heading_to_maintain = new_hdg;
         else
@@ -106,74 +126,90 @@ void Motors::backwards(int32_t new_hdg)
         time_wait = millis();
     }
 
+    ispivoting = false;
+    direc = FWD;
     direction = 's';
 }
 
 void Motors::right(bool pivot)
 {
     stop();
-    digitalWrite(MOTOR_RIGHT_DIR, BCK);
-    digitalWrite(MOTOR_LEFT_DIR, FWD);
+    ledcWrite(CH_L1, MOT_MAX_VAL);
+    ledcWrite(CH_L2, 0);
     if (!pivot)
     {
         motorscore.println(F("(Motors.cpp) MOTORS RIGHT"));
         right_spd = MOT_MAX_VAL;
         left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_RIGHT, right_spd);
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        ispivoting = false;
     }
     else
     {
         motorscore.println(F("(Motors.cpp) MOTORS RIGHT (PIVOT)"));
         right_spd = 0;
         left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_RIGHT, right_spd);
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        ispivoting = true;
     }
-
-    ledcWrite(CHANNEL_LEFT, MOT_MAX_VAL);
     motorstatus.setRunning(true);
     direction = 'd';
     robot_moving = true;
     maintain_heading = false;
     time_wait = millis();
+
+    direc = RIGHT;
 }
 
 void Motors::left(bool pivot)
 {
     stop();
-    digitalWrite(MOTOR_RIGHT_DIR, FWD);
-    digitalWrite(MOTOR_LEFT_DIR, BCK);
-    ledcWrite(CHANNEL_RIGHT, MOT_MAX_VAL);
+    ledcWrite(CH_R1, MOT_MAX_VAL);
+    ledcWrite(CH_R2, 0);
     if (!pivot)
     {
         motorscore.println(F("(Motors.cpp) MOTORS LEFT"));
         right_spd = MOT_MAX_VAL;
         left_spd = MOT_MAX_VAL;
-        ledcWrite(CHANNEL_LEFT, left_spd);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+        ispivoting = false;
     }
     else
     {
         motorscore.println(F("(Motors.cpp) MOTORS LEFT (PIVOT)"));
         right_spd = MOT_MAX_VAL;
         left_spd = 0;
-        ledcWrite(CHANNEL_LEFT, left_spd);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+        ispivoting = true;
     }
 
     motorstatus.setRunning(true);
     direction = 'a';
     robot_moving = true;
     maintain_heading = false;
+
+
+    direc = LEFT;
 }
 
 void Motors::stop()
 {
     motorstatus.setReady(true);
-    ledcWrite(CHANNEL_RIGHT, 0);
-    ledcWrite(CHANNEL_LEFT, 0);
+    ledcWrite(CH_R1, 0);
+    ledcWrite(CH_R2, 0);
+    ledcWrite(CH_L1, 0);
+    ledcWrite(CH_L2, 0);
     direction = 't';
     robot_moving = false;
     maintain_heading = false;
     motorsensor.resetMovementVars();
     motorsensor.setMotorsStop();
+
+    direc = STOP;
 }
 
 char Motors::getDirection()
@@ -229,9 +265,50 @@ void Motors::maintainHeading()
         //}
     }
 
-
-    ledcWrite(CHANNEL_RIGHT, right_spd);
-    ledcWrite(CHANNEL_LEFT, left_spd);
+    if (direc == FWD)
+    {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+    }
+    else if (direc == BCK)
+    {
+        ledcWrite(CH_R1, right_spd);
+        ledcWrite(CH_R2, 0);
+        ledcWrite(CH_L1, left_spd);
+        ledcWrite(CH_L2, 0);
+    }
+    else if (direc == RIGHT)
+    {
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+        if (!ispivoting)
+        {
+            ledcWrite(CH_R1, right_spd);
+            ledcWrite(CH_R2, 0);
+        }
+        else
+        {
+            ledcWrite(CH_R1, 0);
+            ledcWrite(CH_R2, 0);
+        }
+    }
+    else
+    {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        if (!ispivoting)
+        {
+            ledcWrite(CH_L1, left_spd);
+            ledcWrite(CH_L2, 0);
+        }
+        else
+        {
+            ledcWrite(CH_L1, 0);
+            ledcWrite(CH_L2, 0);
+        }
+    }
 }
 
 void Motors::setSpeed(uint32_t spd, uint32_t motor)
@@ -261,20 +338,75 @@ void Motors::setSpeed(uint32_t spd, uint32_t motor)
         return;
     }
 
-    ledcWrite(CHANNEL_RIGHT, right_spd);
-    ledcWrite(CHANNEL_LEFT, left_spd);
+    if (direc == FWD)
+    {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+    }
+    else if (direc == BCK)
+    {
+        ledcWrite(CH_R1, right_spd);
+        ledcWrite(CH_R2, 0);
+        ledcWrite(CH_L1, left_spd);
+        ledcWrite(CH_L2, 0);
+    }
+    else if (direc == RIGHT)
+    {
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, left_spd);
+        if (!ispivoting)
+        {
+            ledcWrite(CH_R1, right_spd);
+            ledcWrite(CH_R2, 0);
+        }
+        else
+        {
+            ledcWrite(CH_R1, 0);
+            ledcWrite(CH_R2, 0);
+        }
+    }
+    else
+    {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
+        if (!ispivoting)
+        {
+            ledcWrite(CH_L1, left_spd);
+            ledcWrite(CH_L2, 0);
+        }
+        else
+        {
+            ledcWrite(CH_L1, 0);
+            ledcWrite(CH_L2, 0);
+        }
+    }
 }
 
 void Motors::playStartSound()
 {
-    mainmotor.playsound.active = true;
+    Note note1 = Note(496, 200);
+    Note note2 = Note(624, 200);
+    Note note3 = Note(990, 200);
+    Note note4 = Note(936, 250);
+    Note note5 = Note(990, 150, 0);
+    Note note6 = Note(744, 250);
+    Note note7 = Note(MAIN_MOT_FREQ, 250, 0); // reset della frequenza a quella normale
+    sp->notes->push_back(note1);
+    sp->notes->push_back(note2);
+    sp->notes->push_back(note3);
+    sp->notes->push_back(note4);
+    sp->notes->push_back(note5);
+    sp->notes->push_back(note6);
+    sp->notes->push_back(note7);
 }
 
 bool Motors::toggleMainMotor(uint32_t spd, uint32_t stat)
 {
     if (stat == TOGGLE)
     {
-        if (mainmotor.active == false)
+        if (!mainmotor.active)
         {
             mainmotor.active = true;
             mainmotor.startup.active = true;
@@ -323,18 +455,48 @@ int32_t Motors::addToHeadingToMaintain(int32_t degs)
     return heading_to_maintain;
 }
 
+void Motors::playInitSound()
+{
+    Note note1 = Note(496, 100);
+    Note note2 = Note(496, 100, 0);
+    Note note3 = Note(496, 100);
+    Note note4 = Note(MAIN_MOT_FREQ, 250, 0);
+    sp->notes->push_back(note1);
+    sp->notes->push_back(note2);
+    sp->notes->push_back(note3);
+    sp->notes->push_back(note4);
+
+    while (sp->notes->size() > 0)
+    {
+        if (sp->time1 >= sp->time2)
+        {
+            ledcSetup(CHANNEL_MAIN, sp->notes->at(0).freq, 12);
+            ledcWrite(CHANNEL_MAIN, sp->notes->at(0).intensity);
+            sp->time1 = millis();
+            sp->time2 = millis() + sp->notes->at(0).duration;
+            sp->notes->erase(sp->notes->begin());
+        }
+        else
+            sp->time1 = millis();
+    }
+}
+
 void Motors::begin()
 {
-    pinMode(MOTOR_LEFT_DIR, OUTPUT);
-    pinMode(MOTOR_RIGHT_DIR, OUTPUT);
-    ledcAttachPin(MOT_R_SPD, CHANNEL_RIGHT);
-    ledcAttachPin(MOT_L_SPD, CHANNEL_LEFT);
-    ledcSetup(CHANNEL_RIGHT, MOVEMENT_MOT_FREQ, 8);
-    ledcSetup(CHANNEL_LEFT, MOVEMENT_MOT_FREQ, 8);
-    pinMode(23, INPUT);
-    pinMode(MOT_MAIN, OUTPUT);
-    ledcAttachPin(MOT_MAIN, CHANNEL_MAIN);
-    playStartSound();
+    ledcSetup(CH_R1, MOVEMENT_MOT_FREQ, 12);
+    ledcSetup(CH_R2, MOVEMENT_MOT_FREQ, 12);
+    ledcSetup(CH_L1, MOVEMENT_MOT_FREQ, 12);
+    ledcSetup(CH_L2, MOVEMENT_MOT_FREQ, 12);
+    ledcAttachPin(MOT_R_CTRL1, CH_R1);
+    ledcAttachPin(MOT_R_CTRL2, CH_R2);
+    ledcAttachPin(MOT_L_CTRL1, CH_L1);
+    ledcAttachPin(MOT_L_CTRL2, CH_L2);
+    ledcWrite(CH_R1, 0);
+    ledcWrite(CH_R2, 0);
+    ledcWrite(CH_L1, 0);
+    ledcWrite(CH_L2, 0);
+    ledcSetup(5, MAIN_MOT_FREQ, 12);
+    ledcAttachPin(13, 5);
 }
 
 void Motors::update()
@@ -358,92 +520,27 @@ void Motors::update()
         }
     }
 
-    if (mainmotor.playsound.active)
+    if (sp->notes->size() > 0)
     {
-        switch (mainmotor.playsound.note_n)
+        if (sp->time1 >= sp->time2)
         {
-        case 0:
-        {
-            ledcSetup(CHANNEL_MAIN, 496, 8);
-            ledcWrite(CHANNEL_MAIN, 7);
-            mainmotor.playsound.time = millis();
-            mainmotor.playsound.note_n++;
-            break;
+            ledcSetup(CHANNEL_MAIN, sp->notes->at(0).freq, 12);
+            ledcWrite(CHANNEL_MAIN, sp->notes->at(0).intensity);
+            sp->time1 = millis();
+            sp->time2 = millis() + sp->notes->at(0).duration;
+            sp->notes->erase(sp->notes->begin());
+
         }
-        case 1:
-        {
-            if (millis() - mainmotor.playsound.time > 200)
-            {
-                ledcSetup(CHANNEL_MAIN, 624, 8);
-                ledcWrite(CHANNEL_MAIN, 7);
-                mainmotor.playsound.time = millis();
-                mainmotor.playsound.note_n++;
-            }
-            break;
-        }
-        case 2:
-        {
-            if (millis() - mainmotor.playsound.time > 200)
-            {
-                ledcSetup(CHANNEL_MAIN, 990, 8);
-                ledcWrite(CHANNEL_MAIN, 7);
-                mainmotor.playsound.time = millis();
-                mainmotor.playsound.note_n++;
-            }
-            break;
-        }
-        case 3:
-        {
-            if (millis() - mainmotor.playsound.time > 200)
-            {
-                ledcSetup(CHANNEL_MAIN, 936, 8);
-                ledcWrite(CHANNEL_MAIN, 7);
-                mainmotor.playsound.time = millis();
-                mainmotor.playsound.note_n++;
-            }
-            break;
-        }
-        case 4:
-        {
-            if (millis() - mainmotor.playsound.time > 250)
-            {
-                ledcWrite(CHANNEL_MAIN, 0);
-                mainmotor.playsound.time = millis();
-                mainmotor.playsound.note_n++;
-            }
-            break;
-        }
-        case 5:
-        {
-            if (millis() - mainmotor.playsound.time > 150)
-            {
-                ledcSetup(CHANNEL_MAIN, 744, 8);
-                ledcWrite(CHANNEL_MAIN, 7);
-                mainmotor.playsound.time = millis();
-                mainmotor.playsound.note_n++;
-            }
-            break;
-        }
-        case 6:
-        {
-            if (millis() - mainmotor.playsound.time > 250)
-            {
-                ledcSetup(CHANNEL_MAIN, MAIN_MOT_FREQ, 8);
-                ledcWrite(CHANNEL_MAIN, 0);
-                mainmotor.playsound.active = false;
-                mainmotor.playsound.note_n = 0;
-            }
-            break;
-        }
-        }
+        else
+            sp->time1 = millis();
     }
 
     if (mainmotor.startup.active)
     {
-        if (millis() - mainmotor.startup.time > 25)
+        if (millis() - mainmotor.startup.time > 50)
         {
             ledcWrite(CHANNEL_MAIN, mainmotor.startup.speed);
-            mainmotor.startup.speed++;
+            mainmotor.startup.speed += 75;
             mainmotor.startup.time = millis();
         }
 

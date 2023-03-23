@@ -56,7 +56,7 @@ class Sensors
         };
 
         void startSensorPolling();
-        void enableSpeedEncoders();
+        void enablePositionEncoders();
 
     private:
         void getValues();

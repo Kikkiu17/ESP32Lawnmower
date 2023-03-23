@@ -11,8 +11,7 @@ uint32_t status_time1 = millis();
 
 void Status::begin()
 {
-    pinMode(RUNNING_LED, OUTPUT);
-    pinMode(ERROR_LED, OUTPUT);
+    // già su output da main.cpp
     digitalWrite(RUNNING_LED, HIGH);
     digitalWrite(ERROR_LED, HIGH);
 }

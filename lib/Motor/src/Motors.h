@@ -52,12 +52,12 @@ class Motors
         /**
          * @brief Accende / spegne il motore principale
          *
-         * @param speed Velocità (0-255). Default: 100
+         * @param speed Velocità (0-4096). Default: 1800
          * @param motor_status Forza lo spegnimento o accensione del motore. Può essere: STOP, RUNNING. Default: TOGGLE
          * @return true se il motore è acceso
          * @return false se il motore è spento
          */
-        bool toggleMainMotor(uint32_t spd = 100, uint32_t motor_status = TOGGLE);
+        bool toggleMainMotor(uint32_t spd = 2800, uint32_t motor_status = TOGGLE);
 
         int32_t getHeadingToMaintain();
 
@@ -70,6 +70,8 @@ class Motors
          * @return nuovo heading da mantenere
          */
         int32_t addToHeadingToMaintain(int32_t degs);
+
+        void playInitSound();
 };
 
 #endif
