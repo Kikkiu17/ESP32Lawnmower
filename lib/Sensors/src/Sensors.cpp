@@ -1,8 +1,7 @@
 #include <SPI.h>
 #include "Wire.h"
 #include <MPU6050_light.h>
-#include <WebSerial.h>
-// librerie custom
+
 #include <AS5600.h>
 #include <Sensors.h>
 #include <Status.h>
@@ -144,54 +143,32 @@ void Sensors::begin()
     }
     else
         sensorcore.println(F(" CANNOT INITIALIZE MPU!"));
+
+    pinMode(REF_BAT, INPUT);
 }
 
 uint32_t TEMP_TIME = 0;
 
 void Sensors::update()
 {
-    uint32_t start_time = micros();
+    uint32_t start_time = esp_timer_get_time();
 
     if (millis() - TEMP_TIME > 30)
     {
-        inactivity_count++;
+        if (!senspacket.info.is_polling)
+            inactivity_count++;
+        else
+            inactivity_count = 0;
 
-        TEMP_TIME = millis();
-        if (!senspacket.bat.waiting && !senspacket.info.is_polling)
-        {
-            senspacket.bat.waiting = true;
-            senspacket.info.last_id = senspacket.info.id;
-            sensormux.readAnalog(BAT);
-        }
-        else if (senspacket.bat.waiting && !senspacket.info.is_polling)
-        {
-            senspacket.bat.waiting = false;
-            senspacket.read_analog = *(sensor_packetptr + 7);
-            senspacket.info.id = *(sensor_packetptr + 8);
-            if (senspacket.info.id > senspacket.info.last_id)
-            {
-                senspacket.info.last_id = senspacket.info.id;
-                senspacket.bat.n_values++;
-                if (senspacket.bat.n_values == 20)
-                {
-                    if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700) // sotto circa 12V
-                        sensorcore.lowBat();
-                    senspacket.bat.total = 0;
-                    senspacket.bat.n_values = 0;
-                }
-                else if (senspacket.read_analog < 4000 && senspacket.read_analog > 700)
-                    senspacket.bat.total += senspacket.read_analog;
-                else
-                    senspacket.bat.total += 3300;
-            }
-        }
-        else if (senspacket.bat.waiting && senspacket.info.is_polling)
-            senspacket.bat.waiting = false;
-
+        if (analogRead(REF_BAT) < 2600 && analogRead(REF_BAT) > 1500)
+            sensorcore.lowBat();
+            
         if (inactivity_count > 20000) // 10 minuti
         {
             
         }
+
+        TEMP_TIME = millis();
     }
 
     // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
@@ -257,19 +234,6 @@ void Sensors::update()
                 else
                     senspacket.obstacle.check_next_dst = false;
             }
-
-            senspacket.bat.n_values++;
-            if (senspacket.bat.n_values == 20)
-            {
-                if (senspacket.bat.total / 20 < 2600 && senspacket.bat.total / 20 > 700)
-                    sensorcore.lowBat();
-                senspacket.bat.total = 0;
-                senspacket.bat.n_values = 0;
-            }
-            else if (senspacket.bat.value < 4000 && senspacket.bat.value > 700)
-                senspacket.bat.total += senspacket.bat.value;
-            else
-                senspacket.bat.total += 3300;
         }
 
         senspacket.info.last_id = senspacket.info.id;
@@ -283,7 +247,7 @@ void Sensors::update()
         {
             if (!senspacket.info.is_polling)
             {
-                WebSerial.println("STARTING POLLING");
+                sensorcore.println("STARTING POLLING");
                 senspacket.info.is_polling = true;
                 sensormux.sensPacketUpdate(true);
             }
@@ -316,7 +280,7 @@ void Sensors::update()
         sens_refresh_time = millis();
     }
 
-    t2 = micros() - start_time;
+    t2 = esp_timer_get_time() - start_time;
 }
 
 uint32_t Sensors::getTime()
@@ -459,7 +423,7 @@ void Sensors::startSensorPolling()
 {
     if (!senspacket.info.is_polling)
     {
-        WebSerial.println("STARTING POLLING");
+        sensorcore.println("STARTING POLLING");
         senspacket.info.is_polling = true;
         sensormux.sensPacketUpdate(true);
     }

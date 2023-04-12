@@ -19,6 +19,39 @@ class NAV
             std::vector<int32_t> data;
         };
 
+        class Point
+        {
+            public:
+                int32_t x, y = 0;
+                uint8_t id = 0;
+                Point() {}
+                Point(int32_t inx, int32_t iny) { x = inx; y = iny; }
+                Point(int32_t inx, int32_t iny, int32_t inid) { x = inx; y = iny; id = inid; }
+        };
+
+        /**
+         * @brief Punto con anche informazioni su blocco, idx, id. Usare Point se queste informazioni non servono, dato che è più leggero (-14 B)
+        */
+        class MapPoint
+        {
+            public:
+                int32_t x, y, block = 0;
+                uint16_t idx = 0;
+                uint8_t id = 0;
+                bool exists = true;
+                MapPoint(int32_t inx, int32_t iny, int32_t inblock, uint16_t inidx, uint32_t inid)
+                {
+                    x = inx;
+                    y = iny;
+                    block = inblock,
+                    idx = inidx;
+                    id = inid;
+                }
+
+                MapPoint(bool does_exist) { exists = does_exist; }
+                MapPoint() {}
+        };
+
         void update();
         void begin();
         // Ruota per un certo numero di gradi automaticamente
@@ -102,14 +135,14 @@ class NAV
         void mapBorderMode(bool on_off = false);
         void sdspeedtest(uint32_t bytes);
         void eraseSD(const char *path);
-        // blocco iniziale: 1
-        void readBlock(uint32_t block);
+        // blocco iniziale: 1 - usare open_file = false quando si leggono tanti blocchi di fila con un file molto grande (> 50 kb)
+        bool readBlock(uint32_t block, bool open_file = true);
 
         uint32_t abs(uint32_t val)
         {
             return (val < 0) ? val * -1 : val;
         }
-        uint32_t abs(int32_t val)
+        int32_t abs(int32_t val)
         {
             return (val < 0) ? val * -1 : val;
         }
@@ -224,9 +257,9 @@ class NAV
          */
         std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> getClosestPointDstFakeXY(int32_t x, int32_t y, uint32_t point_type = 200);
 
-        uint32_t getSDLastReadablePosition();
+        uint32_t getSDLastReadablePosition(const char* file);
         // non chiama getSDLastReadablePosition()
-        uint32_t getMaxBlock(bool fill_empty_block_space = false);
+        uint32_t getMaxBlock(const char* map, bool fill_empty_block_space = false);
 
         /**
          * Ottiene il punto con valore X o Y più alto
@@ -234,14 +267,14 @@ class NAV
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getTopPoint(uint32_t axis);
+        std::tuple<uint32_t, uint32_t, int32_t> getTopPoint(const char* map, uint32_t axis);
         /**
          * Ottiene il punto con valore X o Y più basso
          *
          * @param axis X o Y
          * @return std::tuple<uint32_t, uint32_t, int32_t> - idx blocco, idx punto, valore punto (solo X o Y)
          */
-        std::tuple<uint32_t, uint32_t, int32_t> getBottomPoint(uint32_t axis = X);
+        std::tuple<uint32_t, uint32_t, int32_t> getBottomPoint(const char* map, uint32_t axis = X);
         /**
          * Ottiene il punto con valore X o Y più alto nel blocco specificato
          *
@@ -293,6 +326,7 @@ class NAV
 
         int32_t convertCharVecToInt(std::vector<char> a);
 
+        // apre il mapfile
         bool checkMapCompletion();
 
         /**
@@ -304,8 +338,10 @@ class NAV
         uint32_t getMeanDiff(uint32_t block, uint32_t axis);
 
         // se higher_priority è true, inserisce comandi e dati (nell'ordine dato) prima dei contenuti della coda, spostando quindi questi ultimi dietro ai nuovi comandi.
-        // es: lista: COMANDO1, COMANDO2, COMANDO3 - da inserire: COMANDO4, COMANDO 5 - lista finale: COMANDO4, COMANDO5, COMANDO1, COMANDO2, COMANDO3
+        // es: lista: CMD1, CMD2, CMD3 - da inserire: CMD4, CMD5 - lista finale: CMD4, CMD5, CMD1, CMD2, CMD3
         void addToCommandQueue(uint32_t cmd, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
+        // se higher_priority è true, inserisce comandi e dati (nell'ordine dato) prima dei contenuti della coda, spostando quindi questi ultimi dietro ai nuovi comandi.
+        // es: lista: CMD1, CMD2, CMD3 - da inserire: CMD4, CMD5 - lista finale: CMD4, CMD5, CMD1, CMD2, CMD3
         void addToCommandQueue(std::vector<uint32_t> *cmds, std::vector<int32_t> *input_data, CommandQueue *queue, bool higher_priority = false);
         /**
          * @brief Elimina il numero specificato di comandi (e i relativi dati) da una coda.
@@ -334,6 +370,43 @@ class NAV
         std::tuple<uint32_t, uint32_t, int32_t, int32_t> getBottomPointWith(int32_t coordinate, uint32_t given_coordinate_axis);
 
         uint32_t getBlockContaining(int32_t coordinate, uint32_t axis);
+
+        /**
+         * @brief Riempe la mappa con punti di ID 1 se sono fuori dai bordi e ID 0 se sono dentro
+        */
+        void fillMap(int32_t minx, int32_t miny, int32_t maxx, int32_t maxy);
+
+        /**
+         * @param width Larghezza dell'area riempita
+         * @param height Altezza dell'area riempita
+         * @param minx Minimo valore x dell'area riempita
+         * @param miny Minimo valore y dell'area riempita
+         * @param fill_start_position Posizione in byte dalla quale inizia il riempimento
+        */
+        void removeDuplicatesFromMap(int32_t width, int32_t height, int32_t minx, int32_t miny, uint32_t fill_start_position);
+
+        // non apre il mapfile!
+        MapPoint searchPoint(Point);
+
+        int32_t charArrToInt(uint8_t* arr, uint32_t len);
+
+        void resetArray(uint8_t* arr, uint32_t len);
+
+        Point getPointFromArr(uint8_t* arr, uint32_t len);
+
+
+        // il file dev'essere già aperto
+        void readPoint(uint32_t seek, Point* p);
+
+        void writePoint(Point p);
+        void writePoints(Point* p, uint32_t len);
+
+        bool readPointBlock(uint32_t block);
+
+        void createProcessedMap(const char* raw_map_name, const char* map_name, uint32_t fill_start, int32_t width, int32_t height);
+
+        // accetta solo una mappa con tutti i punti ordinati!
+        void fillBorderHoles(const char* map_name, int32_t width, int32_t height);
 };
 
 #endif

@@ -212,7 +212,7 @@ void TaskManagerFunction(void *param)
                             sensor++;
                             USData.write = US_TRIG_F;
                             USData.read = US_ECHO_F;
-                            vTaskPrioritySet(PulseInHandle, 20);
+                            vTaskPrioritySet(PulseInHandle, 24);
                             item_to_queue = SENS_PACKET;
                             xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
                             break;
@@ -222,7 +222,7 @@ void TaskManagerFunction(void *param)
                             sensor++;
                             USData.write = US_TRIG_L;
                             USData.read = US_ECHO_L;
-                            vTaskPrioritySet(PulseInHandle, 20);
+                            vTaskPrioritySet(PulseInHandle, 24);
                             item_to_queue = SENS_PACKET;
                             xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
                             break;
@@ -232,7 +232,7 @@ void TaskManagerFunction(void *param)
                             sensor++;
                             USData.write = US_TRIG_R;
                             USData.read = US_ECHO_R;
-                            vTaskPrioritySet(PulseInHandle, 20);
+                            vTaskPrioritySet(PulseInHandle, 24);
                             item_to_queue = SENS_PACKET;
                             xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
                             break;
@@ -240,7 +240,7 @@ void TaskManagerFunction(void *param)
                         case 3:
                         {
                             sensor++;
-                            mux_ch = IR_F;
+                            mux_ch = 0;
                             item_to_queue = SENS_PACKET;
                             xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
                             break;
@@ -248,7 +248,7 @@ void TaskManagerFunction(void *param)
                         case 4:
                         {
                             sensor++;
-                            mux_ch = IR_L;
+                            mux_ch = 0;
                             item_to_queue = SENS_PACKET;
                             xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
                             break;
@@ -256,7 +256,7 @@ void TaskManagerFunction(void *param)
                         case 5:
                         {
                             sensor++;
-                            mux_ch = BAT;
+                            mux_ch = 0;
                             item_to_queue = SENS_PACKET;
                             xQueueSend(ReadAnalogQueue, (void *)&item_to_queue, 0);
                             break;

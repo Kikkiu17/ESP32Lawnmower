@@ -39,6 +39,7 @@ void setup()
   //#if (!USE_SD)
   WiFi.mode(WIFI_STA);
   WiFi.begin(wificreds.ssid, wificreds.password);
+  WiFi.setHostname("ESP32S3 Robot");
 
   while (WiFi.status() != WL_CONNECTED)
   {

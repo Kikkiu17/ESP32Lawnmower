@@ -7,6 +7,7 @@
 /* #region  Pin diretti ESP */
 #define RUNNING_LED 18
 #define ERROR_LED 8
+#define REF_BAT 1
 
 // HIGH: FWD, LOW: BCK
 #define MOT_R_CTRL1 48
@@ -15,7 +16,7 @@
 #define MOT_L_CTRL2 47
 #define MOT_MAIN 13
 
-#define MUX_COM 3
+#define MUX_COM 2
 #define MUX0 38
 #define MUX1 37
 #define MUX2 36
@@ -24,15 +25,13 @@
 /* #endregion */
 
 /* #region  Canali MUX */
-#define US_ECHO_L 0
-#define US_TRIG_L 1
-#define US_ECHO_F 2
-#define US_TRIG_F 3
-#define US_ECHO_R 4
-#define US_TRIG_R 5
-#define IR_F 6
-#define IR_L 7
-#define BAT 8
+// 0 inutilizzato - rotto sulla PCB
+#define US_ECHO_L 1
+#define US_TRIG_L 2
+#define US_ECHO_F 3
+#define US_TRIG_F 4
+#define US_ECHO_R 5
+#define US_TRIG_R 6
 /* #endregion */
 
 /* #region  IMU */
@@ -57,10 +56,10 @@
 /* #endregion */
 
 /* #region  Sensors.cpp */
-#define ENABLE_OBSTACLE_AVOIDANCE false
+#define ENABLE_OBSTACLE_AVOIDANCE true
 #define ENABLE_MOVEMENT_SENSORS false
 #define ENABLE_SPD_SENSORS true
-#define ENABLE_BAT_VOLTAGE_SENSING false
+#define ENABLE_BAT_VOLTAGE_SENSING false // se false, il robot non si fermerà quando la batteria è scarica
 /* #endregion */
 
 /* #region  Navigation.cpp */
@@ -87,7 +86,7 @@
 #define MOT_MIN_VAL 2048
 #define MOVEMENT_MOT_FREQ 50
 #define MAIN_MOT_FREQ 2000
-#define US_SENS_DST_TRIG 588 // 10 cm; 10 / 0.017 = 588
+#define US_SENS_DST_TRIG 883 // 10 cm; 10 / 0.017 = 588
 #define GLOBAL_NAV_DELAY 150
 #define FRONT 0
 #define BACK 1

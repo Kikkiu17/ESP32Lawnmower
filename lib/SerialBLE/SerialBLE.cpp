@@ -1,6 +1,6 @@
 #include "SerialBLE.h"
 
-// da https://gist.github.com/czechdude/a04fb89a49fdb67dae5eab5af8777e17
+// preso da https://gist.github.com/czechdude/a04fb89a49fdb67dae5eab5af8777e17
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -58,31 +58,40 @@ bool SerialBLE::available()
 void SerialBLE::write(std::string data)
 {
     pCharacteristic->setValue(data);
+    pCharacteristic->notify();
 }
 
 void SerialBLE::write(float data)
 {
-    pCharacteristic->setValue(data);
+    char str[15];
+    snprintf(str, sizeof(str), "%f", data);
+    pCharacteristic->setValue(str);
+    pCharacteristic->notify();
 }
 
 void SerialBLE::write(int32_t data)
 {
-    pCharacteristic->setValue(data);
+    char str[15];
+    snprintf(str, sizeof(str), "%f", data);
+    pCharacteristic->setValue(str);
+    pCharacteristic->notify();
 }
 
 void SerialBLE::write(char* data)
 {
     pCharacteristic->setValue(data);
+    pCharacteristic->notify();
 }
 
 void SerialBLE::write(const __FlashStringHelper* data)
 {
     pCharacteristic->setValue(reinterpret_cast<const char *>(data));
+    pCharacteristic->notify();
 }
 
 void SerialBLE::begin()
 {
-    BLEDevice::init("ESP32 Robot"); // Give it a name
+    BLEDevice::init("ESP32S3 Robot"); // Give it a name
 
     // Create the BLE Server
     BLEServer *pServer = BLEDevice::createServer();

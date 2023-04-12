@@ -53,21 +53,21 @@ void Core::println(const __FlashStringHelper* type, float data)
         if (USING_USB_SERIAL)
         {
             Serial.print(type);
-            Serial.print(": ");
+            Serial.print(F(": "));
             Serial.print(data);
-            Serial.print(";");
-            Serial.println();
+            Serial.println(F(";"));
         }
         serialbt.write(type);
         serialbt.write(F(": "));
         serialbt.write(data);
-        serialbt.write(F(";"));
+        serialbt.write(F(";\n"));
     }
     else
     {
         if (USING_USB_SERIAL)
             Serial.println(type);
         serialbt.write(type);
+        serialbt.write(F("\n"));
     }
 }
 
@@ -108,16 +108,16 @@ void Core::println(const char *type, float data)
         serialbt.write(type);
         serialbt.write(F(": "));
         serialbt.write(data);
-        serialbt.write(F(";"));
+        serialbt.write(F(";\n"));
     }
     else
     {
         if (USING_USB_SERIAL)
             Serial.println(type);
         serialbt.write(type);
+        serialbt.write(F("\n"));
     }
 }
-
 
 void Core::printStartDataPacket()
 {
@@ -141,19 +141,9 @@ void Core::lowBat()
     mux.sensPacketUpdate(false);
 }
 
-/*void recvMsg(uint8_t *data, size_t len)
-{
-    Core funcore;
-    WebSerial.print("recv: ");
-    for(int i=0; i < len; i++)
-        WebSerial.print(data[i]);
-    WebSerial.println();
-}*/
-
 void Core::begin()
 {
     serialbt.begin();
-    //WebSerial.msgCallback(recvMsg);
     status.begin();
     println(F("Status OK"));
     sensors.begin();
@@ -168,6 +158,8 @@ void Core::begin()
     motors.playStartSound();
     println("Free heap", ESP.getFreeHeap());
     println("Max allocable heap block", ESP.getMaxAllocHeap());
+    println("Free PSRAM", ESP.getFreePsram());
+    println("Max allocable PSRAM block", ESP.getMaxAllocPsram());
     //ptr = mux.getPacketPointer();
 }
 
@@ -175,7 +167,6 @@ void Core::loop()
 {
     if (lowbat && ENABLE_BAT_VOLTAGE_SENSING)
         return;
-    // controllo input utente
     status.update();
     sensors.update();
     motors.update();
@@ -220,17 +211,14 @@ void Core::loop()
         }
         else if (data == 'o')
         {
-            navigation.fillXBytes(72900);
+            navigation.scroll();
         }
         else if (data == 'c')
         {
         }
         else if (data == 'b')
         {
-            uint64_t *packetptr = mux.getPacketPointer();
-            mux.readAnalog(BAT);
-            delay(50);
-            print(F("Batteria: "));
+            print(F("Batteria"), float(analogRead(REF_BAT)));
             println(F(" su 2770"));
         }
         else if (data == 'm'|| data == 'M')
