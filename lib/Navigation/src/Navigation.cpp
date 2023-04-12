@@ -1,9 +1,7 @@
 #include <vector>
 #include <tuple>
-#include <SPI.h>
-#include <SD.h>
 #include <WebSerial.h>
-// librerie custom
+#include <SD.h>
 #include <Navigation.h>
 #include <Sensors.h>
 #include <Motors.h>
@@ -16,16 +14,19 @@
 #define SCLK 40
 #define CS 39
 
-#define MAP_DATA_SIZE 7         // dimensione dati x y in byte
-#define MAP_BLOCK_SIZE 3840       // (MAP_DATA_SIZE * 2 + 1) * 256, byte (struttura: 000000000000000 (sarebbe 0000000,0000000,0,))
+#define MAP_DATA_SIZE 7                         // dimensione dati x y in byte
+#define MAP_POINT_SIZE (MAP_DATA_SIZE * 2 + 1)  // 15
+#define MAP_BLOCK_SIZE (MAP_POINT_SIZE * 256)     // (MAP_DATA_SIZE * 2 + 1) * 256, byte (struttura: 000000000000000 (sarebbe 0000000,0000000,0,))
 #define POINTS_PER_BLOCK 256
 
 // variabili globali così non si frammenta la memoria ogni volta che si chiama NAV::readBlock, risparmiando anche tempo
 // vengono usati vettori e buffer allocato dinamicamente perché si allocano sull'heap ed è meglio se sono molto grandi
 // buffer non può essere un vettore perché SD::read accetta solo array
-std::vector<int32_t> map_arr_data((POINTS_PER_BLOCK) * 3); // ci sono 768 dati in 256 punti (256 * 3 (x, y, ID)) o 2816 byte di punti
-uint8_t* buffer = new uint8_t[MAP_BLOCK_SIZE];
-std::vector<char> temp_data(256);       // convertCharArrToInt accetta solo array da 256 elementi
+std::vector<int32_t> map_arr_data((POINTS_PER_BLOCK) * 3);  // ci sono 768 dati in 256 punti (256 * 3 (x, y, ID)) o 2816 byte di punti
+uint8_t* block_buffer = new uint8_t[MAP_BLOCK_SIZE];        // messo nell'heap così è più veloce
+std::vector<char> temp_data(256);                           // convertCharArrToInt accetta solo array da 256 elementi
+uint8_t raw_point[15] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+NAV::Point generic_point = NAV::Point();
 
 #define GOFORWARD 1             // --- 2 argomenti ---
 #define GOBACKWARDS 2           // --- 2 argomenti ---
@@ -35,7 +36,7 @@ std::vector<char> temp_data(256);       // convertCharArrToInt accetta solo arra
 #define SETHDGTOPOINT 6         // --- 2 argomenti ---
 #define ROTATEFORPIVOT 7        // --- 1 argomento ---
 
-SPIClass *spi = new SPIClass(HSPI);
+//SPIClass *spi = new SPIClass(FSPI);
 File mapfile;
 
 Mux NAVMux;
@@ -52,6 +53,7 @@ ID BLOCCHI MAPPA
 3: ignora punto
 */
 
+const uint8_t zeroes[7] = {48, 48, 48, 48, 48, 48, 48};
 bool autorun = false;
 uint32_t distance_target = 0;
 float distance_traveled = 0.00;
@@ -69,6 +71,15 @@ int32_t forward_wait_for_rotation_hdg = 0;
 uint32_t timer = millis();
 bool bordermode = false;
 uint32_t bordermode_start_time = 0;
+
+class Chrono
+{
+    private:
+        uint32_t start_time = 0;
+    public:
+        void start() { start_time = millis(); }
+        uint32_t getTime() { return millis() - start_time; }
+};
 
 class DirControl
 {
@@ -139,6 +150,7 @@ struct
 struct NavMap
 {
     uint32_t current_block = 0;
+    NAV::Point* points = new NAV::Point[POINTS_PER_BLOCK];
     int32_t arrX[POINTS_PER_BLOCK] = {};
     int32_t arrY[POINTS_PER_BLOCK] = {};
     uint32_t arrID[POINTS_PER_BLOCK] = {};
@@ -148,7 +160,7 @@ struct NavMap
     struct max
     {
         uint32_t block = 0;
-        int32_t value = 0;
+        int32_t value = -1000000000;
         uint32_t idx = 0;
     };
     struct min
@@ -206,6 +218,7 @@ NavMapUtil navutil;
 NAV::CommandQueue *nav_ptr, navqueue;      // navqueue
 NAV::CommandQueue *avoid_ptr, avoidqueue;  // avoidqueue
 DirControl dir;
+Chrono chrono;
 
 int32_t current_hdg = 0;
 int32_t diff = 0;
@@ -328,6 +341,7 @@ void NAV::update()
     if (going_backwards)
     {
         distance_traveled = NAVSensors.getTraveledDistance();
+        NAVCore.println("trav dst", distance_traveled);
 
         if (abs(distance_traveled) >= distance_target && distance_traveled != 0 && distance_target != 0)
         {
@@ -357,7 +371,7 @@ void NAV::update()
             {
                 int32_t xvec, yvec;
                 std::tie(xvec, yvec) = addToVectors(5, current_hdg);
-                mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
+                mapfile = SD.open("/MAP.txt", FILE_APPEND);
                 mapfile.print(xvec);
                 mapfile.print(F(","));
                 mapfile.print(yvec);
@@ -382,7 +396,7 @@ void NAV::update()
                 int32_t heading_displacement = 0;
                 heading_displacement = (dir.getDirectionToTurn() == LEFT) ? -180 : 180;
                 // gobackwards, gobackwards, rotateforpivot, goforward, goforward
-                std::vector<int32_t> data = {7, hdg_to_maintain, heading_displacement, MAX_CM, AUTO};
+                std::vector<int32_t> data = {10, hdg_to_maintain, heading_displacement, MAX_CM, AUTO};
                 addToCommandQueue(&commands, &data, avoid_ptr);
             }
             else
@@ -517,88 +531,39 @@ void NAV::update()
                 vectors.current_ycm = (int32_t)vectors.yvector;
                 if (vectors.current_xcm != vectors.last_xcm || vectors.current_ycm != vectors.last_ycm)
                 {
+                    vectors.last_xcm = vectors.current_xcm;
+                    vectors.last_ycm = vectors.current_ycm;
+
                     if ((LOG_MAP || bordermode || navutil.map_not_full) && navutil.log_active)
                     {
-                        vectors.last_xcm = vectors.current_xcm;
-                        vectors.last_ycm = vectors.current_ycm;
-
-                        mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
-                        if (vectors.current_xcm < 0)
-                        {
-                            mapfile.print(F("-"));
-                            if (vectors.current_xcm == 0)
-                                for (uint32_t i = 0; i < 4; i++)
-                                    mapfile.write(0);
-                            else
-                            {
-                                for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits(vectors.current_xcm * -1); i++)
-                                    mapfile.write(0);
-                                mapfile.print((uint32_t)(vectors.current_xcm * -1));
-                            }
-
-                        }
-                        else
-                        {
-                            if (vectors.current_xcm == 0)
-                                for (uint32_t i = 0; i < 5; i++)
-                                    mapfile.write(0);
-                            else
-                            {
-                                for (int i = 0; i < MAP_DATA_SIZE - countDigits(vectors.current_xcm); i++)
-                                    mapfile.write(0);
-                                mapfile.print((uint32_t)(vectors.current_xcm));
-                            }
-
-                        }
-
-                        if (vectors.current_ycm < 0)
-                        {
-                            mapfile.print(F("-"));
-                            if (vectors.current_ycm == 0)
-                                for (uint32_t i = 0; i < 4; i++)
-                                    mapfile.write(0);
-                            else
-                            {
-                                for (int i = 0; i < MAP_DATA_SIZE - 1 - countDigits(vectors.current_ycm * -1); i++)
-                                    mapfile.write(0);
-                                mapfile.print((uint32_t)(vectors.current_ycm * -1));
-                            }
-
-                        }
-                        else
-                        {
-                            if (vectors.current_ycm == 0)
-                                for (uint32_t i = 0; i < 5; i++)
-                                    mapfile.write(0);
-                            else
-                            {
-                                for (int i = 0; i < MAP_DATA_SIZE - countDigits(vectors.current_ycm); i++)
-                                    mapfile.write(0);
-                                mapfile.print((uint32_t)(vectors.current_ycm));
-                            }
-
-                        }
+                        generic_point.x = vectors.current_xcm;
+                        generic_point.y = vectors.current_ycm;
 
                         if (bordermode)
                         {
-                            mapfile.print(2);
-                            if (vectors.xvector < 5 && vectors.xvector > -5 && vectors.yvector < 5 && vectors.yvector > -5 && millis() - bordermode_start_time > 10000)
+                            generic_point.id = 2;
+                            writePoint(generic_point);
+                            if (vectors.xvector < 5 && vectors.xvector > -5 && vectors.yvector < 5 && vectors.yvector > -5 && millis() - bordermode_start_time > 20000)
                             {
                                 bordermode = false;
                                 stop();
                                 NAVCore.println(F("Bordermode COMPLETED"));
+                                mapfile.close();
                                 ESP.restart();
                             }
                         }
                         else
-                            mapfile.print(0);
+                        {
+                            generic_point.id = 0;
+                            writePoint(generic_point);
+                        }
                         navutil.last_readable_pos += mapfile.position();
 
-                        mapfile.close();
+                        NAVCore.println("X", vectors.current_xcm);
+                        NAVCore.println("Y", vectors.current_ycm);
+                        mapfile.flush();
                     }
 
-                    NAVCore.println("X: ", vectors.current_xcm);
-                    NAVCore.println("Y: ", vectors.current_ycm);
                 }
 
                 if (!bordermode)
@@ -636,6 +601,7 @@ uint32_t NAV::getTime()
 
 void NAV::goForward(uint32_t cm, int32_t hdg_to_maintain)
 {
+    resetMovementVars();
     dir.direction = FWD;
     nav_ptr->busy = true;
     if (Rotation.rotating)
@@ -648,7 +614,6 @@ void NAV::goForward(uint32_t cm, int32_t hdg_to_maintain)
     pausevars.was_going_forward = true;
     NAVSensors.resetTraveledDistance();
     NAVMotors.forward();
-    resetMovementVars();
     distance_target = cm;
     going_forward = true;
     robot_moving_x_y = true;
@@ -657,12 +622,12 @@ void NAV::goForward(uint32_t cm, int32_t hdg_to_maintain)
 
 void NAV::goBackwards(uint32_t cm, int32_t hdg_to_maintain)
 {
+    resetMovementVars();
     dir.direction = BCK;
     nav_ptr->busy = true;
     pausevars.was_going_forward = true;
     NAVSensors.resetTraveledDistance();
     NAVMotors.backwards();
-    resetMovementVars();
     distance_target = cm;
     going_backwards = true;
     robot_moving_x_y = true;
@@ -881,17 +846,17 @@ void NAV::eraseSD(const char *path)
     mapfile.close();
 }
 
-void NAV::readBlock(uint32_t block)
+bool NAV::readBlock(uint32_t block, bool open)
 {
-    if (!USE_SD) return;
-    if (nav->current_block == block)
-        return;
+    if (!USE_SD || nav->current_block == block) return false;
 
-    uint32_t start_position = (block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1;
-    uint32_t target_position = MAP_BLOCK_SIZE * block - 1;
+    uint32_t start_position = MAP_BLOCK_SIZE * (block - 1)/* - 1*/;
 
-    if (target_position > navutil.last_readable_pos)
-        return;
+    if (start_position + MAP_BLOCK_SIZE > navutil.last_readable_pos)
+    {
+        log_e("SD Target read position greater than last readable position (%d > %d)", start_position + MAP_BLOCK_SIZE, navutil.last_readable_pos);
+        return false;
+    }
 
     nav->reset();
     nav->current_block = block;
@@ -901,31 +866,67 @@ void NAV::readBlock(uint32_t block)
     // reset degli array
     for (uint32_t i = 0; i < (POINTS_PER_BLOCK) * 3; i++)
         map_arr_data[i] = 0;
-    for (uint32_t i = 0; i < MAP_BLOCK_SIZE; i++)
-        buffer[i] = 0;
-    for (uint32_t i = 0; i < 256; i++)
+    for (uint32_t i = 0; i < MAP_DATA_SIZE; i++)
         temp_data[i] = 0;
     temp_data[MAP_DATA_SIZE] = '\0';
     uint32_t temp_idx = 0;
     uint32_t data_idx = 0;
 
     NAVCore.println("Reading", block);
-    mapfile = SD.open(F("/MAP.txt"));
+    if (open)
+        mapfile = SD.open("/raw_map.txt");
     mapfile.seek(start_position);
-    mapfile.read(buffer, MAP_BLOCK_SIZE);
-    mapfile.close();
+    mapfile.read(block_buffer, MAP_BLOCK_SIZE);
+    if (open)
+        mapfile.close();
+
+    uint32_t point_idx = 0;
 
     for (int i = 0; i < MAP_BLOCK_SIZE; i++)
     {
         if (data_type < 2)                                          // coordinate
         {
-            if (buffer[i] == 45)                                    // ASCII trattino
+            if (block_buffer[i] == 45)                                    // ASCII trattino
                 temp_data[temp_idx] = '-';
             else
-                temp_data[temp_idx] = buffer[i];
+                temp_data[temp_idx] = block_buffer[i];
             if (temp_idx == MAP_DATA_SIZE - 1)
             {
                 map_arr_data[data_idx] = convertCharVecToInt(temp_data);
+
+                if (data_type == 0)
+                {
+                    if (map_arr_data[data_idx] > nav->MaxX->value)
+                    {
+                        nav->MaxX->value = map_arr_data[data_idx];
+                        nav->MaxX->block = block;
+                        nav->MaxX->idx = read_data;
+                    }
+                    if (map_arr_data[data_idx] < nav->MinX->value)
+                    {
+                        nav->MinX->value = map_arr_data[data_idx];
+                        nav->MinX->block = block;
+                        nav->MinX->idx = read_data;
+                    }
+                    nav->arrX[read_data] = map_arr_data[data_idx];
+                }
+                else if (data_type == 1)
+                {
+                    if (map_arr_data[data_idx] > nav->MaxY->value)
+                    {
+                        nav->MaxY->value = map_arr_data[data_idx];
+                        nav->MaxY->block = block;
+                        nav->MaxY->idx = read_data;
+                    }
+                    if (map_arr_data[data_idx] < nav->MinY->value)
+                    {
+                        nav->MinY->value = map_arr_data[data_idx];
+                        nav->MinY->block = block;
+                        nav->MinY->idx = read_data;
+                    }
+                    nav->arrY[read_data] = map_arr_data[data_idx];
+                }
+
                 data_idx++;
                 data_type++;
                 temp_idx = 0;
@@ -935,58 +936,14 @@ void NAV::readBlock(uint32_t block)
         }
         if (data_type == 2)                                         // ID punto
         {
-            map_arr_data[data_idx] = buffer[i] - '0';
+            map_arr_data[data_idx] = block_buffer[i] - '0';
+            nav->arrID[read_data] = map_arr_data[data_idx];
             data_idx++;
             data_type = 0;
         }
     }
 
-    for (int i = 0; i < POINTS_PER_BLOCK * 3; i++)
-    {
-        if (data_type == 0)
-        {
-            if (map_arr_data[i] > nav->MaxX->value)
-            {
-                nav->MaxX->value = map_arr_data[i];
-                nav->MaxX->block = block;
-                nav->MaxX->idx = read_data;
-            }
-            if (map_arr_data[i] < nav->MinX->value)
-            {
-                nav->MinX->value = map_arr_data[i];
-                nav->MinX->block = block;
-                nav->MinX->idx = read_data;
-            }
-            nav->arrX[read_data] = map_arr_data[i];
-        }
-        else if (data_type == 1)
-        {
-            if (map_arr_data[i] > nav->MaxY->value)
-            {
-                nav->MaxY->value = map_arr_data[i];
-                nav->MaxY->block = block;
-                nav->MaxY->idx = read_data;
-            }
-            if (map_arr_data[i] < nav->MinY->value)
-            {
-                nav->MinY->value = map_arr_data[i];
-                nav->MinY->block = block;
-                nav->MinY->idx = read_data;
-            }
-            nav->arrY[read_data] = map_arr_data[i];
-        }
-        else if (data_type == 2)
-        {
-            nav->arrID[read_data] = map_arr_data[i];
-            data_type = 0;
-            read_data++;
-            pos = mapfile.position();
-            if (pos == target_position)
-                break;
-            continue;
-        }
-        data_type++;
-    }
+    return true;
 }
 
 uint32_t NAV::getCurrentBlock()
@@ -1013,6 +970,7 @@ uint32_t NAV::getCurrentBlock()
         return nav->current_block;
     }
 
+    mapfile = SD.open("/MAP.txt");
     while (!xblock_found || !yblock_found)
     {
         if (counter != last_block)
@@ -1020,7 +978,7 @@ uint32_t NAV::getCurrentBlock()
             if (read_blocks == 2)
                 pause();
             last_block = counter;
-            readBlock(counter);
+            readBlock(counter, false);
             read_blocks++;
         }
         else
@@ -1081,6 +1039,7 @@ uint32_t NAV::getCurrentBlock()
             }
         }
     }
+    mapfile.close();
 
     if (read_blocks >= 2)
         resume();
@@ -1120,6 +1079,7 @@ uint32_t NAV::getCurrentBlockFakeXY(int32_t x, int32_t y)
         return nav->current_block;
     }
 
+    mapfile = SD.open("/MAP.txt");
     while (!xblock_found || !yblock_found)
     {
         if (counter != last_block)
@@ -1127,7 +1087,7 @@ uint32_t NAV::getCurrentBlockFakeXY(int32_t x, int32_t y)
             if (read_blocks == 2)
                 pause();
             last_block = counter;
-            readBlock(counter);
+            readBlock(counter, false);
             read_blocks++;
         }
         else
@@ -1188,6 +1148,7 @@ uint32_t NAV::getCurrentBlockFakeXY(int32_t x, int32_t y)
             }
         }
     }
+    mapfile.close();
 
     if (read_blocks >= 2)
         resume();
@@ -1289,18 +1250,19 @@ std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> NAV::getClosestPointDstFakeXY
 
 void NAV::mapBorderMode(bool on_off)
 {
+    if (on_off)
+        mapfile = SD.open("/raw_map.txt", FILE_APPEND);
     bordermode = on_off;
     bordermode_start_time = millis();
 }
 
-uint32_t NAV::getSDLastReadablePosition()
+uint32_t NAV::getSDLastReadablePosition(const char* file)
 {
     if (!USE_SD) return 0;
     uint32_t pos = 0;
-    mapfile = SD.open(F("/MAP.txt"));
-    while (mapfile.available())
-        mapfile.read();
-    pos = mapfile.position();
+    int32_t data = 0;
+    mapfile = SD.open(file);
+    pos = mapfile.size();
     mapfile.close();
 
     return pos;
@@ -1312,8 +1274,8 @@ void NAV::sdspeedtest(uint32_t bytes)
     uint8_t* buffer = new uint8_t[72900];
     uint32_t start_time = millis();
     mapfile = SD.open("/MAP.txt");
-    for (int i = 0; i < bytes; i++)
-        mapfile.parseInt();
+    //for (int i = 0; i < bytes; i++)
+    //    mapfile.parseInt();
     mapfile.close();
     Serial.print(F("TIME (72900  bytes): "));
     Serial.println(millis() - start_time);
@@ -1407,7 +1369,7 @@ std::tuple<int32_t, int32_t> NAV::getVectors(int32_t val, uint32_t hdg)
     return std::make_tuple((int32_t)(xvec * 100), (int32_t)(yvec * 100));
 }
 
-uint32_t NAV::getMaxBlock(bool fill)
+uint32_t NAV::getMaxBlock(const char* map, bool fill)
 {
     if (!USE_SD) return 0;
     uint32_t last_full_block = 0;
@@ -1426,18 +1388,19 @@ uint32_t NAV::getMaxBlock(bool fill)
 
     if (fill && last_incomplete_block != 0)
     {
-        NAVCore.print(F("(Navigation) MAP incomplete, filling... "));
+        NAVCore.print(F("incomplete, filling... "));
         uint32_t target_position = MAP_BLOCK_SIZE * last_incomplete_block /*- 1; TO CHECK*/;
         uint32_t cursor = max_readable_pos;
-        mapfile = SD.open(F("/MAP.txt"), FILE_APPEND);
+        mapfile = SD.open(map, FILE_APPEND);
         mapfile.seek(cursor);
-        while (cursor <= target_position)
+        uint8_t null_point[15] {'0','0','0','0','0','0','0','0','0','0','0','0','0','0','3'};
+        while (cursor != target_position)
         {
-            mapfile.print(F("000000000,000000000,3,")); // punto da ignorare (3)
+            mapfile.write(null_point, 15); // punto da ignorare (3)
             cursor = mapfile.position();
         }
         mapfile.close();
-        NAVCore.println(F("DONE"));
+        NAVCore.print(F("DONE "));
     }
 
     navutil.last_full_block = last_full_block;
@@ -1447,15 +1410,16 @@ uint32_t NAV::getMaxBlock(bool fill)
     return last_full_block;
 }
 
-std::tuple<uint32_t, uint32_t, int32_t> NAV::getTopPoint(uint32_t axis)
+std::tuple<uint32_t, uint32_t, int32_t> NAV::getTopPoint(const char* map, uint32_t axis)
 {
-    uint32_t max_block = getMaxBlock();
+    uint32_t max_block = getMaxBlock(map);
     uint32_t current_block = 1;
     uint32_t block_idx, p_idx = 0;
     int32_t p_value = 0;
+    mapfile = SD.open(map);
     while (current_block <= max_block)
     {
-        readBlock(current_block);
+        readBlock(current_block, false);
         
         if (axis == X)
         {
@@ -1478,20 +1442,22 @@ std::tuple<uint32_t, uint32_t, int32_t> NAV::getTopPoint(uint32_t axis)
 
         current_block++;
     }
+    mapfile.close();
 
     return std::make_tuple(block_idx, p_idx, p_value);
 }
 
-std::tuple<uint32_t, uint32_t, int32_t> NAV::getBottomPoint(uint32_t axis)
+std::tuple<uint32_t, uint32_t, int32_t> NAV::getBottomPoint(const char* map, uint32_t axis)
 {
-    uint32_t max_block = getMaxBlock();
+    uint32_t max_block = getMaxBlock(map);
     uint32_t current_block = 1;
     uint32_t block_idx, p_idx = 0;
     int32_t p_value = 1000000000;
 
+    mapfile = SD.open(map);
     while (current_block <= max_block)
     {
-        readBlock(current_block);
+        readBlock(current_block, false);
 
         if (axis == X)
         {
@@ -1514,6 +1480,7 @@ std::tuple<uint32_t, uint32_t, int32_t> NAV::getBottomPoint(uint32_t axis)
 
         current_block++;
     }
+    mapfile.close();
 
     return std::make_tuple(block_idx, p_idx, p_value);
 }
@@ -1576,10 +1543,21 @@ std::tuple<int32_t, int32_t> NAV::getPointXY(uint32_t block, uint32_t point_idx)
     uint32_t block_position = (block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1;
     uint32_t idx_position = point_idx * 22;
     uint32_t seek_position = block_position + idx_position;
-    mapfile = SD.open(F("/MAP.txt"));
+    mapfile = SD.open("/MAP.txt");
     mapfile.seek(seek_position);
-    x = mapfile.parseInt();
-    y = mapfile.parseInt();
+    uint8_t buf[7];
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        x *= 10;
+        x += buf[i] - '0';
+    }
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        y *= 10;
+        y += buf[i] - '0';
+    }
     mapfile.close();
 
     return std::make_tuple(x, y);
@@ -1670,10 +1648,21 @@ uint32_t NAV::setHeadingToPoint(uint32_t block, uint32_t point_idx)
     int32_t int_yvector = vectors.intyvector();
     nav_ptr->busy = true;
 
-    mapfile = SD.open(F("/MAP.txt"));
+    mapfile = SD.open("/MAP.txt");
     mapfile.seek(seek_position);
-    px = mapfile.parseInt();
-    py = mapfile.parseInt();
+    uint8_t buf[7];
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        px *= 10;
+        px += buf[i] - '0';
+    }
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        py *= 10;
+        py += buf[i] - '0';
+    }
     mapfile.close();
 
     xdiff = pos_xvector - abs(px);
@@ -1701,10 +1690,21 @@ uint32_t NAV::getPointDst(uint32_t block, uint32_t point_idx)
     uint32_t seek_position = ((block == 1) ? 0 : MAP_BLOCK_SIZE * (block - 1) - 1) + point_idx * 22;
     int32_t px = 0;
     int32_t py = 0;
-    mapfile = SD.open(F("/MAP.txt"));
+    mapfile = SD.open("/MAP.txt");
     mapfile.seek(seek_position);
-    px = mapfile.parseInt();
-    py = mapfile.parseInt();
+    uint8_t buf[7];
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        px *= 10;
+        px += buf[i] - '0';
+    }
+    mapfile.read(buf, 7);
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        py *= 10;
+        py += buf[i] - '0';
+    }
     mapfile.close();
     uint32_t pos_xvector = (uint32_t)abs(vectors.xvector * 100);
     uint32_t pos_yvector = (uint32_t)abs(vectors.yvector * 100);
@@ -1749,28 +1749,21 @@ void NAV::scroll()
 {
     int32_t int_xvector = vectors.intxvector();
     int32_t int_yvector = vectors.intyvector();
-    int32_t leftmost_blk_x, leftmost_idx_x, leftmost_pval_x = 0;
+    int32_t bot_blk_x, bot_idx_x, bot_pval_x = 0;
+    int32_t bot_blk_y, bot_idx_y, bot_pval_y = 0;
+    int32_t top_blk_x, top_idx_x, top_pval_x = 0;
+    int32_t top_blk_y, top_idx_y, top_pval_y = 0;
     int32_t rightmost_point_blk_x, rightmost_point_idx_x, rightmost_point_val_x = 0;
 
-    std::tie(leftmost_blk_x, leftmost_idx_x, leftmost_pval_x) = getBottomPoint(X); // punto più a sinstra, punto iniziale
-    std::tie(rightmost_point_blk_x, rightmost_point_idx_x, rightmost_point_val_x) = getTopPoint(X); // punto più a destra, punto finale
+    std::tie(bot_blk_x, bot_idx_x, bot_pval_x) = getBottomPoint("/raw_map.txt", X); // punto più a sinstra, punto iniziale
+    std::tie(bot_blk_y, bot_idx_y, bot_pval_y) = getBottomPoint("/raw_map.txt", Y); // punto più in basso, punto iniziale
+    std::tie(top_blk_x, top_idx_x, top_pval_x ) = getTopPoint("/raw_map.txt", X);
+    std::tie(top_blk_y, top_idx_y, top_pval_y) = getTopPoint("/raw_map.txt", Y);
 
-    uint32_t mean_diff = getMeanDiff(leftmost_blk_x, X);
-    uint32_t key_points = (uint32_t)(std::ceil((rightmost_point_val_x - leftmost_pval_x) / mean_diff));
-    // il robot si dovrà spostare a destra di mean_diff mm, per key_points volte
-    NAVCore.println(F("MEAN DIFF"), mean_diff);
-    NAVCore.println(F("KEY POINTS"), key_points);
+    Serial.printf("Bottom point: %d, %d - map point info: blockX %d idxX %d blockY %d idxY %d\n", bot_pval_x, bot_pval_y, bot_blk_x, bot_idx_x, bot_blk_y, bot_idx_y);
+    Serial.printf("Top point: %d, %d - map point info: blockX %d idxX %d blockY %d idxY %d\n", top_pval_x, top_pval_y, top_blk_x, top_idx_x, top_blk_y, top_idx_y);
 
-    std::vector<uint32_t> commands = {GOTOPOINT, SETHDGTOPOINT};
-    std::vector<int32_t> data = {leftmost_blk_x, leftmost_idx_x, rightmost_point_blk_x, rightmost_point_idx_x};
-    addToCommandQueue(&commands, &data, &navqueue);
-
-    // TODO ----- ALGORITMO PER RENDERE MOVIMENTO PIù FLUIDO
-    // SOMMARE LE VELOCITà DELLE DUE RUOTE E DIVIDERE PER 2 PER OTTENERE LA VELOCITà DEL ROBOT
-
-    /* equivalente di (ma messi in coda, da eseguire uno alla volta):
-    goToPoint((uint32_t)leftmost_blk_x, (uint32_t)leftmost_pidx_x);
-    rotateToDeg(0, getRotationDirection(getHeading360(), 0)); */
+    fillMap(bot_pval_x, bot_pval_y, top_pval_x, top_pval_y);
 }
 
 void NAV::pause()
@@ -1832,15 +1825,17 @@ bool NAV::checkMapCompletion()
         return navutil.map_not_full;
 
     uint32_t accessible_points_count = 0;
+    mapfile = SD.open("/MAP.txt");
     for (uint32_t current_block = 1; current_block <= navutil.last_full_block; current_block++)
     {
-        readBlock(current_block);
+        readBlock(current_block, false);
         for (uint32_t i = 0; i < 256; i++)
         {
             if (nav->arrID[i] == ACCESSIBLE)
                 accessible_points_count++;
         }
     }
+    mapfile.close();
 
     if (accessible_points_count < 50)
     {
@@ -2179,9 +2174,10 @@ uint32_t NAV::getBlockContaining(int32_t coordinate, uint32_t axis)
 {
     uint32_t current_block = 1;
     bool block_found = false;
+    mapfile = SD.open("/MAP.txt");
     while (current_block <= navutil.last_full_block)
     {
-        readBlock(current_block);
+        readBlock(current_block, false);
         if (axis == X)
         {
             if (coordinate <= nav->MaxX->value && coordinate >= nav->MinX->value)
@@ -2201,6 +2197,7 @@ uint32_t NAV::getBlockContaining(int32_t coordinate, uint32_t axis)
 
         current_block++;
     }
+    mapfile.close();
 
     if (block_found)
         return current_block;
@@ -2295,9 +2292,369 @@ void NAV::fillXBytes(uint32_t bytes)
 {
     if (!USE_SD) return;
     mapfile = SD.open("/MAP.txt", FILE_WRITE);
+    uint8_t num[1] = {0};
     for (int i = 0; i < bytes; i++)
-        mapfile.write(0);
+        mapfile.write(num, 1);
     mapfile.close();
+}
+
+void NAV::fillMap(int32_t minx, int32_t miny, int32_t maxx, int32_t maxy)
+{
+    uint32_t fill_start_position = getSDLastReadablePosition("/raw_map.txt");
+
+    uint32_t width = abs(maxx - minx);
+    uint32_t height = abs(maxy - miny);
+
+    Point inac_point = Point(minx, miny, 1);
+    mapfile = SD.open("/raw_map.txt", FILE_APPEND);
+
+    Serial.printf("Creating map... ");
+    chrono.start();
+    for (uint32_t col = 0; col <= width; col++)
+    {
+        inac_point.x += col;
+        for (uint32_t row = 0; row <= height; row++)
+        {
+            inac_point.y += row;
+            writePoint(inac_point);
+        }
+    }
+    mapfile.close();
+    float speed = (float)(width * height * 15) / ((float)chrono.getTime() / 1000);
+    Serial.printf("Done (%f KB/s)\n", speed);
+
+    removeDuplicatesFromMap(width, height, minx, miny, fill_start_position);
+}
+
+NAV::MapPoint NAV::searchPoint(Point p)
+{
+    bool map_opened = false;
+    uint32_t current_block = 1;
+
+    while (current_block <= navutil.last_full_block)
+    {
+        // prima legge cosa c'è nel blocco attuale, altrimenti cerca negli altri (così è più veloce)
+        if (p.x >= nav->MinX->value && p.x <= nav->MaxX->value && p.y >= nav->MinY->value && p.y <= nav->MaxY->value)
+        {
+            for (uint32_t i = 0; i < POINTS_PER_BLOCK; i++)
+            {
+                if (p.x == nav->arrX[i] && p.y == nav->arrY[i])
+                {
+                    if (map_opened)
+                        mapfile.close();
+                    return MapPoint(p.x, p.y, current_block, i, nav->arrID[i]);
+                }
+            }
+        }
+
+        if (!map_opened)
+        {
+            map_opened = true;
+            mapfile = SD.open("/MAP.txt");
+
+        }
+        readBlock(current_block, false);    // false per non aprire il file visto che è già aperto
+        current_block++;
+    }
+
+    if (map_opened)
+        mapfile.close();
+    return MapPoint(false);
+}
+
+int32_t NAV::charArrToInt(uint8_t* arr, uint32_t len)
+{
+    uint32_t power = 1;
+    int32_t res = 0;
+
+    for (int32_t i = len - 1; i >= 0; i--)
+    {
+        if (arr[i] == 45)
+        {
+            res *= -1;
+            break;
+        }
+        res += (arr[i] - '0') * power;
+        power *= 10;
+    }
+
+    return res;
+}
+
+void NAV::resetArray(uint8_t* arr, uint32_t len)
+{
+    for (int32_t i = 0; i < len; i++)
+        arr[i] = 0;
+}
+
+void NAV::removeDuplicatesFromMap(int32_t width, int32_t height, int32_t minx, int32_t miny, uint32_t fill_start_position)
+{
+    // SI PUò RENDERE UN PROCESSO PER DUE CORE
+    Point p = Point(0, 0);
+    Point fill_p = Point(0, 0);
+    uint32_t fill_p_position = 0;
+
+    uint32_t position_idx = 0;
+    uint32_t* positions_to_overwrite = new uint32_t[POINTS_PER_BLOCK * 4];
+    uint32_t* ids = new uint32_t[POINTS_PER_BLOCK * 4];
+    for (int32_t i = 0; i < POINTS_PER_BLOCK * 4; i++)
+    {
+        positions_to_overwrite[i] = 0;
+        ids[i] = 0;
+    }
+
+    Serial.printf("Removing duplicate fill points... ", width, height);
+    mapfile = SD.open("/raw_map.txt");
+    for (int32_t block = 0; block < fill_start_position / MAP_BLOCK_SIZE; block++)
+    {
+        readPointBlock(block);
+        for (int32_t map_point_idx = 0; map_point_idx < POINTS_PER_BLOCK; map_point_idx++)  // il fill start indica la fine della mappa fatta dal robot
+        {
+            p = nav->points[map_point_idx];
+            if (p.id == 3)  
+                continue;
+            fill_p_position = fill_start_position + ((height * (abs(p.x - minx)) + abs(p.y - miny) + abs(p.x - minx)) * MAP_POINT_SIZE);
+            readPoint(fill_p_position, &fill_p);
+
+            if (p.x == fill_p.x && p.y == fill_p.y)
+            {
+                positions_to_overwrite[position_idx] = fill_p_position;
+                ids[position_idx] = p.id;
+                position_idx++;
+            }
+
+            if (position_idx == POINTS_PER_BLOCK * 4)
+            {
+                // deve scrivere i dati sull'SD
+                mapfile.close();    // chiude il file che è in modalità read
+                mapfile = SD.open("/raw_map.txt", FILE_WRITE);
+                for (int32_t i = 0; i < position_idx; i++)
+                {
+                    mapfile.seek(positions_to_overwrite[i] + 14);   // deve sovrascrivere solo l'ID del punto
+                    mapfile.write(ids[i] + '0');                    // scrive l'ID (sarà quasi sempre 2)
+                }
+                position_idx = 0;
+                mapfile.close();
+                mapfile = SD.open("/raw_map.txt");
+            }
+        }
+        if (block == 1)
+            break;
+    }
+
+    // se non ha già scritto i dati sull'SD (cioè che non c'erano oltre 1024 punti da scrivere), li scrive ora
+    if (position_idx != 0)
+    {
+        if (position_idx == POINTS_PER_BLOCK * 4)
+            position_idx -= 1;
+        mapfile.close();
+        mapfile = SD.open("/raw_map.txt", FILE_WRITE);
+        for (int32_t i = 0; i <= position_idx; i++)
+        {
+            mapfile.seek(positions_to_overwrite[i] + 14);
+            mapfile.write(ids[i] + '0');
+        }
+        position_idx = 0;
+        mapfile.close();
+    }
+    else
+    {
+        readPoint(15, &p);
+        mapfile.close();
+    }
+
+    delete[] positions_to_overwrite;
+    delete[] ids;
+
+    Serial.printf("Done\n");
+
+    createProcessedMap("/raw_map.txt", "/map.txt", fill_start_position, width, height);
+}
+
+bool NAV::readPointBlock(uint32_t block)
+{
+    uint32_t start_position = MAP_BLOCK_SIZE * block;
+    if (!USE_SD || nav->current_block == block) return false;
+    if (start_position + MAP_BLOCK_SIZE > navutil.last_readable_pos)
+    {
+        log_e("SD Target read position greater than last readable position (%d > %d)", start_position + MAP_BLOCK_SIZE, navutil.last_readable_pos);
+        return false;
+    }
+
+    for (int i = 0; i < POINTS_PER_BLOCK; i++)
+    {
+        readPoint(i * MAP_POINT_SIZE + start_position, &nav->points[i]);
+        if (nav->points[i].x > nav->MaxX->value)
+            nav->MaxX->value = nav->points[i].x;
+        if (nav->points[i].y > nav->MaxY->value)
+            nav->MaxY->value = nav->points[i].y;
+        if (nav->points[i].x < nav->MinX->value)
+            nav->MinX->value = nav->points[i].x;
+        if (nav->points[i].y < nav->MinY->value)
+            nav->MinY->value = nav->points[i].y;
+    }
+
+    return true;
+}
+
+NAV::Point NAV::getPointFromArr(uint8_t* arr, uint32_t len)
+{
+    int32_t power = 1;
+    Point p = Point(0, 0);
+    for (int32_t i = 13; i >= 7; i--)
+    {
+        if (arr[i] == '-')
+        {
+            if (i == 7)
+                p.y *= -1;
+            else
+                power *= -1;
+            continue;
+        }
+        p.y += (arr[i] - '0') * power;
+        power *= 10;
+    }
+    power = 1;
+    for (int32_t i = 6; i >= 0; i--)
+    {
+        if (arr[i] == '-')
+        {
+            if (i == 0)
+                p.x *= -1;
+            else
+                power *= -1;
+            continue;
+        }
+        p.x += (arr[i] - '0') * power;
+        power *= 10;
+    }
+
+    return p;
+}
+
+void NAV::readPoint(uint32_t seek, Point* p)
+{
+    p->x = 0;
+    p->y = 0;
+    if (!mapfile.seek(seek))
+        Serial.printf("seek fail %d", seek);
+    mapfile.read(raw_point, 15);
+    int32_t power = 1;
+    for (int32_t i = 13; i >= 7; i--)
+    {
+        if (raw_point[i] == '-')
+        {
+            if (i == 7)
+                p->y *= -1;
+            else
+                power *= -1;
+            continue;
+        }
+        p->y += (raw_point[i] - '0') * power;
+        power *= 10;
+    }
+    power = 1;
+    for (int32_t i = 6; i >= 0; i--)
+    {
+        if (raw_point[i] == '-')
+        {
+            if (i == 0)
+                p->x *= -1;
+            else
+                power *= -1;
+            continue;
+        }
+        p->x += (raw_point[i] - '0') * power;
+        power *= 10;
+    }
+    p->id = raw_point[14] - '0';
+}
+
+void NAV::createProcessedMap(const char* raw_map_name, const char* map_name, uint32_t fill_start, int32_t width, int32_t height)
+{
+    Point* points_to_write = new Point[1024];
+    uint32_t last_pos = getSDLastReadablePosition(raw_map_name);
+    uint32_t points_to_read = (last_pos - fill_start) / MAP_POINT_SIZE;
+    uint32_t points_in_arr = 0;
+    uint32_t seek_pos = 0;
+    Serial.printf("Writing processed map to file... ", width, height);
+    mapfile = SD.open(raw_map_name);
+    for (int32_t block = 0; block < int32_t(std::ceil((float)points_to_read / 1024.0)); block++)
+    {
+        for (int32_t i = 0; i < 1024; i++)
+        {
+            if (block * 1024 + i >= points_to_read)
+                break;
+
+            seek_pos = fill_start + block * 15360 /* 1024 * 15 */ + i * 15;
+            readPoint(seek_pos, &points_to_write[i]);
+            points_in_arr = i;
+        }
+
+        mapfile.close();
+        mapfile = SD.open(map_name, FILE_APPEND);
+        for (int i = 0; i < points_in_arr + 1; i++)
+            writePoint(points_to_write[i]);
+        mapfile.close();
+        mapfile = SD.open(raw_map_name);
+    }
+    mapfile.close();
+
+    delete[] points_to_write;
+
+    Serial.printf("Done\n");
+
+    fillBorderHoles(map_name, width, height);
+}
+
+void NAV::writePoint(Point p)
+{
+    int32_t tempx = abs(p.x);
+    int32_t tempy = abs(p.y);
+    for (int32_t i = 0; i < 15; i++)
+        raw_point[i] = 0;
+
+    for (int32_t i = 6; i >= 0; i--)
+    {
+        if (p.x < 0 && i == 0)
+        {
+            raw_point[i] = '-';
+            break;
+        }
+        raw_point[i] = tempx % 10 + '0';
+        tempx /= 10;
+    }
+    for (int32_t i = 13; i >= 7; i--)
+    {
+        if (p.y < 0 && i == 7)
+        {
+            raw_point[i] = 45;
+            break;
+        }
+        raw_point[i] = tempy % 10 + '0';
+        tempy /= 10;
+    }
+    raw_point[14] = p.id + '0';
+    mapfile.write(raw_point, 15);
+}
+
+void NAV::fillBorderHoles(const char* map_name, int32_t width, int32_t height)
+{
+    uint32_t seek = 0;
+    Point p = Point();
+
+    Serial.printf("%d x %d\n", width, height);
+    mapfile = SD.open(map_name);
+    for (int32_t row = 0; row <= width; row++)
+    {
+        for (int32_t col = 0; col <= height; col++)
+        {
+            seek = row * height * 15 + (col + row) * 15;
+            readPoint(seek, &p);
+        }
+        if (row == 1)
+            break;
+    }
 }
 
 void NAV::begin()
@@ -2306,8 +2663,9 @@ void NAV::begin()
     avoid_ptr = &avoidqueue;
 
     if (!USE_SD) return;
-    spi->begin(SCLK, MISO, MOSI, CS);
-    if (SD.begin(CS, *spi))
+    //spi->begin(SCLK, MISO, MOSI, CS);
+    SPI.begin(SCLK, MISO, MOSI, CS);
+    if (SD.begin(CS))
         NAVCore.println(F("(Navigation) SD Card OK"));
     else
     {
@@ -2316,9 +2674,11 @@ void NAV::begin()
         ESP.restart();
     }
 
-    /*navutil.last_readable_pos = getSDLastReadablePosition();
-    getMaxBlock(true);
+    navutil.last_readable_pos = getSDLastReadablePosition("/raw_map.txt");
+    getMaxBlock("/raw_map.txt", true);
 
-    navutil.last_readable_pos = getSDLastReadablePosition();
-    checkMapCompletion();*/
+    navutil.last_readable_pos = getSDLastReadablePosition("/raw_map.txt");
+    NAVCore.println("Last full block is", navutil.last_full_block);
+    checkMapCompletion();
+    readBlock(1);
 }
