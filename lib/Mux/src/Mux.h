@@ -53,9 +53,9 @@ class Mux
         float requestUSDistance(uint8_t sensor);
 
         /**
-         * @return uint64_t* Puntatore all'array che contiene i dati del multiplexer
+         * @return unsigned long* Puntatore all'array che contiene i dati del multiplexer
          */
-        uint64_t* getPacketPointer();
+        unsigned long* getPacketPointer();
 
         /**
          * Abilita o disabilita il polling del pacchetto dati dei sensori

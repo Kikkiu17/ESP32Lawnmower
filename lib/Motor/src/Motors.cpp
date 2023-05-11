@@ -62,10 +62,10 @@ bool maintain_heading = false;
 char direction;
 bool reverse_heading = false;
 
-uint32_t time_1 = millis();
-uint32_t time_2 = millis();
-uint32_t time_wait = millis();
-uint32_t direc = FWD;
+unsigned int time_1 = millis();
+unsigned int time_2 = millis();
+unsigned int time_wait = millis();
+unsigned int direc = FWD;
 bool ispivoting = false;
 
 uint32_t Motors::getTime()
@@ -76,36 +76,7 @@ uint32_t Motors::getTime()
 void Motors::forward(int32_t new_hdg)
 {
     stop();
-    //motorsensor.checkFrontObstacle(MOTORS); // manda subito una richiesta per controllare se c'è un ostacolo
     motorscore.println(F("(Motors.cpp) MOTORS FORWARD"));
-    motorstatus.setRunning(true);
-
-    if (!maintain_heading)
-    {
-        left_spd = MOT_MAX_VAL;
-        right_spd = MOT_MAX_VAL;
-        ledcWrite(CH_R1, 0);
-        ledcWrite(CH_R2, MOT_MAX_VAL);
-        ledcWrite(CH_L1, 0);
-        ledcWrite(CH_L2, MOT_MAX_VAL);
-        if (new_hdg != AUTO)
-            heading_to_maintain = new_hdg;
-        else
-            heading_to_maintain = motorsensor.getHeading();
-        maintain_heading = true;
-        robot_moving = true;
-        reverse_heading = false;
-    }
-
-    ispivoting = false;
-    direc = BCK;
-    direction = 'w';
-}
-
-void Motors::backwards(int32_t new_hdg)
-{
-    stop();
-    motorscore.println(F("(Motors.cpp) MOTORS BACKWARDS"));
     motorstatus.setRunning(true);
 
     if (!maintain_heading)
@@ -122,12 +93,42 @@ void Motors::backwards(int32_t new_hdg)
             heading_to_maintain = motorsensor.getHeading();
         maintain_heading = true;
         robot_moving = true;
+        reverse_heading = false;
+    }
+
+    ispivoting = false;
+    direc = FWD;
+    motorsensor.enablePositionEncoders();
+    direction = 'w';
+}
+
+void Motors::backwards(int32_t new_hdg)
+{
+    stop();
+    motorscore.println(F("(Motors.cpp) MOTORS BACKWARDS"));
+    motorstatus.setRunning(true);
+
+    if (!maintain_heading)
+    {
+        left_spd = MOT_MAX_VAL;
+        right_spd = MOT_MAX_VAL;
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, MOT_MAX_VAL);
+        ledcWrite(CH_L1, 0);
+        ledcWrite(CH_L2, MOT_MAX_VAL);
+        if (new_hdg != AUTO)
+            heading_to_maintain = new_hdg;
+        else
+            heading_to_maintain = motorsensor.getHeading();
+        maintain_heading = true;
+        robot_moving = true;
         reverse_heading = true;
         time_wait = millis();
     }
 
     ispivoting = false;
-    direc = FWD;
+    direc = BCK;
+    motorsensor.enablePositionEncoders();
     direction = 's';
 }
 
@@ -159,8 +160,8 @@ void Motors::right(bool pivot)
     robot_moving = true;
     maintain_heading = false;
     time_wait = millis();
-
     direc = RIGHT;
+    motorsensor.enablePositionEncoders();
 }
 
 void Motors::left(bool pivot)
@@ -191,18 +192,18 @@ void Motors::left(bool pivot)
     direction = 'a';
     robot_moving = true;
     maintain_heading = false;
-
-
     direc = LEFT;
+    motorsensor.enablePositionEncoders();
 }
 
 void Motors::stop()
 {
     motorstatus.setReady(true);
-    ledcWrite(CH_R1, 0);
+    /*ledcWrite(CH_R1, 0);
     ledcWrite(CH_R2, 0);
     ledcWrite(CH_L1, 0);
-    ledcWrite(CH_L2, 0);
+    ledcWrite(CH_L2, 0);*/
+    brake();
     direction = 't';
     robot_moving = false;
     maintain_heading = false;
@@ -212,9 +213,9 @@ void Motors::stop()
     direc = STOP;
 }
 
-char Motors::getDirection()
+unsigned int Motors::getDirection()
 {
-    return direction;
+    return direc;
 }
 
 void Motors::maintainHeading()
@@ -267,26 +268,26 @@ void Motors::maintainHeading()
 
     if (direc == FWD)
     {
-        ledcWrite(CH_R1, 0);
-        ledcWrite(CH_R2, right_spd);
-        ledcWrite(CH_L1, 0);
-        ledcWrite(CH_L2, left_spd);
-    }
-    else if (direc == BCK)
-    {
         ledcWrite(CH_R1, right_spd);
         ledcWrite(CH_R2, 0);
         ledcWrite(CH_L1, left_spd);
         ledcWrite(CH_L2, 0);
     }
-    else if (direc == RIGHT)
+    else if (direc == BCK)
     {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
         ledcWrite(CH_L1, 0);
         ledcWrite(CH_L2, left_spd);
+    }
+    else if (direc == RIGHT)
+    {
+        ledcWrite(CH_L1, left_spd);
+        ledcWrite(CH_L2, 0);
         if (!ispivoting)
         {
-            ledcWrite(CH_R1, right_spd);
-            ledcWrite(CH_R2, 0);
+            ledcWrite(CH_R1, 0);
+            ledcWrite(CH_R2, right_spd);
         }
         else
         {
@@ -296,12 +297,12 @@ void Motors::maintainHeading()
     }
     else
     {
-        ledcWrite(CH_R1, 0);
-        ledcWrite(CH_R2, right_spd);
+        ledcWrite(CH_R1, right_spd);
+        ledcWrite(CH_R2, 0);
         if (!ispivoting)
         {
-            ledcWrite(CH_L1, left_spd);
-            ledcWrite(CH_L2, 0);
+            ledcWrite(CH_L1, 0);
+            ledcWrite(CH_L2, left_spd);
         }
         else
         {
@@ -340,26 +341,26 @@ void Motors::setSpeed(uint32_t spd, uint32_t motor)
 
     if (direc == FWD)
     {
-        ledcWrite(CH_R1, 0);
-        ledcWrite(CH_R2, right_spd);
-        ledcWrite(CH_L1, 0);
-        ledcWrite(CH_L2, left_spd);
-    }
-    else if (direc == BCK)
-    {
         ledcWrite(CH_R1, right_spd);
         ledcWrite(CH_R2, 0);
         ledcWrite(CH_L1, left_spd);
         ledcWrite(CH_L2, 0);
     }
-    else if (direc == RIGHT)
+    else if (direc == BCK)
     {
+        ledcWrite(CH_R1, 0);
+        ledcWrite(CH_R2, right_spd);
         ledcWrite(CH_L1, 0);
         ledcWrite(CH_L2, left_spd);
+    }
+    else if (direc == RIGHT)
+    {
+        ledcWrite(CH_L1, left_spd);
+        ledcWrite(CH_L2, 0);
         if (!ispivoting)
         {
-            ledcWrite(CH_R1, right_spd);
-            ledcWrite(CH_R2, 0);
+            ledcWrite(CH_R1, 0);
+            ledcWrite(CH_R2, right_spd);
         }
         else
         {
@@ -369,12 +370,12 @@ void Motors::setSpeed(uint32_t spd, uint32_t motor)
     }
     else
     {
-        ledcWrite(CH_R1, 0);
-        ledcWrite(CH_R2, right_spd);
+        ledcWrite(CH_R1, right_spd);
+        ledcWrite(CH_R2, 0);
         if (!ispivoting)
         {
-            ledcWrite(CH_L1, left_spd);
-            ledcWrite(CH_L2, 0);
+            ledcWrite(CH_L1, 0);
+            ledcWrite(CH_L2, left_spd);
         }
         else
         {
@@ -479,6 +480,14 @@ void Motors::playInitSound()
         else
             sp->time1 = millis();
     }
+}
+
+void Motors::brake()
+{
+    ledcWrite(CH_R1, MOT_MAX_VAL);
+    ledcWrite(CH_R2, MOT_MAX_VAL);
+    ledcWrite(CH_L1, MOT_MAX_VAL);
+    ledcWrite(CH_L2, MOT_MAX_VAL);
 }
 
 void Motors::begin()

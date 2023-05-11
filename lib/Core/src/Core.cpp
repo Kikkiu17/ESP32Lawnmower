@@ -167,13 +167,7 @@ void Core::loop()
 {
     if (lowbat && ENABLE_BAT_VOLTAGE_SENSING)
         return;
-    status.update();
-    sensors.update();
-    motors.update();
-    if (!ENABLE_AUTO_NAVIGATION)
-        return;
-    navigation.update();
-
+    
     if (serialbt.available())
     {
         Serial.print("recv: ");
@@ -302,6 +296,7 @@ void Core::loop()
         {
             println(F("BT STOP"));
             navigation.externalStop();
+            motors.brake();
         }
     }
 
@@ -326,4 +321,11 @@ void Core::loop()
             }
         }
     }
+
+    status.update();
+    sensors.update();
+    motors.update();
+    if (!ENABLE_AUTO_NAVIGATION)
+        return;
+    navigation.update();
 }

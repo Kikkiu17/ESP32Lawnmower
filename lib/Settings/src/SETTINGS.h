@@ -4,7 +4,7 @@
 
 #define USING_USB_SERIAL true
 
-/* #region  Pin diretti ESP */
+// --- PIN ESP ---
 #define RUNNING_LED 18
 #define ERROR_LED 8
 #define REF_BAT 1
@@ -22,9 +22,8 @@
 #define MUX2 36
 #define MUX3 35
 // #define MUX_ENABLE 17 - NC in PCB
-/* #endregion */
 
-/* #region  Canali MUX */
+// --- CANALI MUX ---
 // 0 inutilizzato - rotto sulla PCB
 #define US_ECHO_L 1
 #define US_TRIG_L 2
@@ -32,9 +31,8 @@
 #define US_TRIG_F 4
 #define US_ECHO_R 5
 #define US_TRIG_R 6
-/* #endregion */
 
-/* #region  IMU */
+// --- IMU ---
 #define ACCEL_X_ERROR 0.46
 #define ACCEL_Y_ERROR 0.32
 #define ACCEL_Z_ERROR 0.38
@@ -48,31 +46,33 @@
 #define INVERT_YAW true
 #define INVERT_PITCH false
 #define INVERT_ROLL false
-/* #endregion */
 
-/* #region  Altre informazioni */
+// --- GENERALE ---
 // #define ENABLE_WEBSERIAL
-#define WHEEL_DIAMETER 162 // mm - old: 91
+#define WHEEL_DIAMETER 159 // mm - old: 91
 /* #endregion */
 
-/* #region  Sensors.cpp */
+// --- SENSORS.CPP ---
 #define ENABLE_OBSTACLE_AVOIDANCE true
 #define ENABLE_MOVEMENT_SENSORS false
 #define ENABLE_SPD_SENSORS true
-#define ENABLE_BAT_VOLTAGE_SENSING false // se false, il robot non si fermerà quando la batteria è scarica
-/* #endregion */
+#define ENABLE_BAT_VOLTAGE_SENSING false    // se false, il robot non si fermerà quando la batteria è scarica
+#define MPU_CALIBRATION_TIME 30             // secondi
 
-/* #region  Navigation.cpp */
-#define MPU_SPD_SENSORS_REFRESH_RATE 1  // ms
-#define ENABLE_AUTO_NAVIGATION true     // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_SPD_SENSORS abilitati
-#define ENABLE_ROTATION_SENSING true    // ferma il robot quando l'heading target viene raggiunto
-#define ENABLE_ROTATION_LOOP false      // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
+// --- NAVIGATION.CPP ---
+#define MPU_SPD_SENSORS_REFRESH_RATE 5      // ms
+#define ENABLE_AUTO_NAVIGATION true         // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_SPD_SENSORS abilitati
+#define ENABLE_ROTATION_SENSING true        // ferma il robot quando l'heading target viene raggiunto
+#define ENABLE_ROTATION_LOOP true           // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
 #define LOG_OBSTACLES_TO_MAP false
 #define LOG_MAP false
-#define MAP_POINT_PROXIMITY_DST 200     // mm
-/* #endregion */
+#define MAP_POINT_PROXIMITY_DST 200         // mm
 
-/* #region  Nomi costanti codice */
+// --- QUEUESYS.CPP ---
+#define MAX_QUEUE_SIZE 50
+#define MAX_DATA_SIZE_PER_COMMAND 5
+
+// --- COSTANTI ---
 #define FORWARD_NO_VARIABLE_UPDATE 1 // default: 0 = forward normale
 #define CH_R1 1
 #define CH_R2 2
@@ -110,10 +110,11 @@
 #define OBSTACLE 1
 // mappa
 #define BORDER 2
+// mappa
+#define IGNORE 3
 #define AUTO 2147748
 #define NONE 2147749
 #define ALL 2147750
-/* #endregion */
 
 #define SHOW_MODULE_EXECUTION_TIME false
 #define SHOW_HEAP_INFO false                // viene considerato solo se SHOW_MODULE_EXECUTION_TIME è true

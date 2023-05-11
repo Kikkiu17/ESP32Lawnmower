@@ -42,7 +42,7 @@ class Sensors
         float getLastTraveledDistance();
         void resetTraveledDistance();
         void returnUSDistance(float distance);
-        uint32_t getTime();
+        unsigned int getTime();
         struct SelfTest* getSelfTestResults();
 
         class Robot
@@ -53,6 +53,8 @@ class Sensors
                 float last_traveled_distance = 0;
                 bool first_iteration_ignored = false;
                 bool enable_speed_encoders = 0;
+                float angle = 0;
+                unsigned int last_angle_time = 0;
         };
 
         void startSensorPolling();
@@ -74,7 +76,7 @@ class Sensors
          * Accetta e restituisce sempre e solo valori positivi
          * Se first_half e second_half sono entrambi TRUE, inverte tutti gli heading. Es: 135° -> 45°; 45° -> 135°
          */
-        int64_t invert180HDG(int64_t hdg);
+        long invert180HDG(long hdg);
          /**
          * @brief Converte un valore di heading in formato 360° in un valore di heading in formato 180°
          * 
@@ -82,7 +84,7 @@ class Sensors
          * @param always_positive Indica se il risultato dev'essere sempre positivo (default: false)
          * @return int32_t Heading in formato 180°
          */
-        int64_t convert360To180HDG(int64_t hdg, bool always_positive = false);
+        long convert360To180HDG(long hdg, bool always_positive = false);
 };
 
 #endif

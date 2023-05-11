@@ -30,7 +30,7 @@ class Motors
          * 
          */
         void stop();
-        char getDirection();
+        unsigned int getDirection();
 
         /**
          * @brief Mantiene l'heading attuale
@@ -72,6 +72,7 @@ class Motors
         int32_t addToHeadingToMaintain(int32_t degs);
 
         void playInitSound();
+        void brake();
 };
 
 #endif
