@@ -65,11 +65,11 @@ class Sensors
         void getFrontUSObstacle(uint8_t request_type = DEFAULT);
         void getAccelErrors();
 
-        void getEncoderLeftAngle();
-        void getEncoderRightAngle();
-
         const void selectEncoderLeft();
         const void selectEncoderRight();
+
+        void getEncoderLeftAngle();
+        void getEncoderRightAngle();
 
         /**
          * Inverte l'heading in formato 180.

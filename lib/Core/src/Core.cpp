@@ -312,6 +312,8 @@ void Core::loop()
             println(F(" us"));
             print(F("NAV LOOP"), navigation.getTime());
             println(F(" us"));
+            print("tot", motors.getTime() + sensors.getTime() + navigation.getTime());
+            println(" us");
             if (SHOW_HEAP_INFO)
             {
                 println(F("STATUS OF HEAP FRAGMENTATION (in bytes)"));

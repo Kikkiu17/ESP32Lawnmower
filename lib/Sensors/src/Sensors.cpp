@@ -12,8 +12,8 @@
 
 // l'mpu e l'encoder sinistro usano entrambi il bus 0 (sda 11, scl 12) anche se sulla pcb dovrebbero usare bus diversi (sistemato in rev3)
 // questo perché l'esp32s3 ha solo 2 bus I2C quindi non potrebbe gestire tutte e 3 le periferiche
-AS5600* encleft = new AS5600(11, 12, 0);
-AS5600* encright = new AS5600(9, 10, 1);
+AS5600 encleft(Wire);
+AS5600 encright(Wire1);
 MPU6050 mpu = MPU6050(Wire);
 Motors sensormotors;
 Core sensorcore;
@@ -105,13 +105,15 @@ Sensors::Robot robot;
 
 void Sensors::begin()
 {
+    Wire.begin(11, 12);
+    Wire1.begin(9, 10);
     Wire.setClock(800000L);
     Wire1.setClock(800000L);
-    if (encleft->isMagnetDetected())
+    if (encleft.isMagnetDetected())
     {
         sensorcore.print(F("(Sensors) LEFT Magnet detected,"));
-        if (!encleft->isMagnetTooStrong())
-            if (!encleft->isMagnetTooWeak())
+        if (!encleft.isMagnetTooStrong())
+            if (!encleft.isMagnetTooWeak())
                 sensorcore.println(F(" OK"));
             else
                 sensorcore.println(F(" TOO WEAK"));
@@ -121,11 +123,11 @@ void Sensors::begin()
     else
         sensorcore.println(F("(Sensors) LEFT Magnet NOT DETECTED! Positioning not available!"));
 
-    if (encright->isMagnetDetected())
+    if (encright.isMagnetDetected())
     {
         sensorcore.print(F("(Sensors) RIGHT Magnet detected,"));
-        if (!encright->isMagnetTooStrong())
-            if (!encright->isMagnetTooWeak())
+        if (!encright.isMagnetTooStrong())
+            if (!encright.isMagnetTooWeak())
                 sensorcore.println(F(" OK"));
             else
                 sensorcore.println(F(" TOO WEAK"));
@@ -276,23 +278,40 @@ void Sensors::update()
             {
                 getEncoderRightAngle();
                 getEncoderLeftAngle();
+                
                 if (robot.first_iteration_ignored)
                 {
-                    unsigned int left_time_diff = leftEncoder.read_time - leftEncoder.last_read_time;
-                    unsigned int right_time_diff = rightEncoder.read_time - rightEncoder.last_read_time;
-                    float left_velocity = (float)leftEncoder.diff / (float)left_time_diff * 0.45 /*(WHEEL_DIAMETER / 2) / 180 = 0.45*/ * PI;
-                    float right_velocity = (float)rightEncoder.diff / (float)right_time_diff * 0.45 /*(WHEEL_DIAMETER / 2) / 180 = 0.45*/ * PI;
+                    unsigned int left_deltaT = leftEncoder.read_time - leftEncoder.last_read_time;
+                    unsigned int right_deltaT = rightEncoder.read_time - rightEncoder.last_read_time;
+                    float mean_deltaT = ((float)left_deltaT + (float)right_deltaT) / 2000;
+                    float left_angular_velocity = (float)leftEncoder.diff / (float)left_deltaT; // ω = deltaAngle / t
+                    float right_angular_velocity = (float)rightEncoder.diff / (float)right_deltaT;
+
+                    // 7.95 == WHEEL_DIAMETER (mm) / 10 (cm) / 2 -> raggio
+                    float left_velocity = left_angular_velocity * 7.95; // vt = ω * r
+                    float right_velocity = right_angular_velocity * 7.95;
+
                     float robot_velocity = (left_velocity + right_velocity) / 2; // cm/s
-                    robot.traveled_distance_raw = robot_velocity * (((float)left_time_diff + (float)right_time_diff) / 2000.0); // cm
+                    robot.traveled_distance_raw = robot_velocity * mean_deltaT;  // S(t) = S0 + vt -> cm
                     robot.traveled_distance += robot.traveled_distance_raw;
                     robot.last_traveled_distance = robot.traveled_distance_raw;
-                    leftEncoder.angular_velocity = left_velocity / 14.7; // tutto in cm
-                    rightEncoder.angular_velocity = right_velocity / 14.7; // tutto in cm
-                    unsigned long angle_time = millis();
-                    float inst = degrees((leftEncoder.angular_velocity - rightEncoder.angular_velocity) * ((float)(millis() - robot.last_angle_time) / 1000.0));
-                    robot.last_angle_time = angle_time;
+
+                    float left_w = abs(left_velocity / 14.9);
+                    float right_w = abs(left_velocity / 14.9);
+                    if (direction == BCK)
+                    {
+                        left_w *= -1;
+                        right_w *= -1;
+                    }
+                    else if (direction == RIGHT)
+                        right_w *= -1;
+                    else if (direction == LEFT)
+                        left_w *= -1;
+
+                    float inst = degrees((left_w - right_w) * ((float)(left_deltaT + right_deltaT) / 2000));
                     robot.angle += inst;
-                    Serial.printf("%f %f %f\n", robot.angle, right_velocity, left_velocity, inst, leftEncoder.angular_velocity, left_velocity, rightEncoder.angular_velocity, right_velocity, robot.traveled_distance_raw);
+                    Serial.println(robot.traveled_distance);
+                    Serial.printf("dst: %f, ang: %f, inst: %f, left: %f, right: %f -- LSPD: %f, RSPD: %f deltatime: %f\n", robot.traveled_distance, robot.angle, inst, left_w, right_w, left_velocity, right_velocity, (float)(left_deltaT + right_deltaT) / 2e6);
                 }
                 else
                 {
@@ -374,56 +393,6 @@ void Sensors::resetTraveledDistance()
     robot.last_traveled_distance = 0;
 }
 
-void Sensors::getEncoderLeftAngle()
-{
-    leftEncoder.last_read_time = leftEncoder.read_time;
-    leftEncoder.last_scaled_angle = leftEncoder.scaled_angle;
-    leftEncoder.scaled_angle = (long)(encleft->getScaledAngle() * 100);
-    leftEncoder.read_time = millis();
-    if (abs(leftEncoder.last_scaled_angle - leftEncoder.scaled_angle) > 18000)
-    {
-        leftEncoder.absolute_revolutions++;
-        if (leftEncoder.last_scaled_angle > leftEncoder.scaled_angle)
-            leftEncoder.revolutions--;
-        else
-            leftEncoder.revolutions++;
-    }
-
-    int diff = leftEncoder.scaled_angle - leftEncoder.last_scaled_angle;
-    while (diff <= -18000)
-        diff += 36000;
-    while (diff > 18000)
-        diff -= 36000;
-
-    leftEncoder.diff = diff;
-    leftEncoder.total_angle += diff;
-}
-
-void Sensors::getEncoderRightAngle()
-{
-    rightEncoder.last_read_time = rightEncoder.read_time;
-    rightEncoder.last_scaled_angle = rightEncoder.scaled_angle;
-    rightEncoder.scaled_angle = (long)(encright->getScaledAngle() * 100);
-    rightEncoder.read_time = millis();
-    if (abs(rightEncoder.last_scaled_angle - rightEncoder.scaled_angle) > 18000)
-    {
-        rightEncoder.absolute_revolutions++;
-        if (rightEncoder.last_scaled_angle > rightEncoder.scaled_angle)
-            rightEncoder.revolutions--;
-        else
-            rightEncoder.revolutions++;
-    }
-
-    int diff = rightEncoder.last_scaled_angle - rightEncoder.scaled_angle;
-    while (diff <= -18000)
-        diff += 36000;
-    while (diff > 18000)
-        diff -= 36000;
-
-    rightEncoder.diff = diff;
-    rightEncoder.total_angle += diff;
-}
-
 long Sensors::invert180HDG(long hdg)
 {
     long return_hdg = hdg + 18000;
@@ -457,4 +426,56 @@ void Sensors::startSensorPolling()
 void Sensors::enablePositionEncoders()
 {
     robot.enable_speed_encoders = true;
+}
+
+void Sensors::getEncoderLeftAngle()
+{
+    leftEncoder.last_read_time = leftEncoder.read_time;
+    leftEncoder.last_scaled_angle = leftEncoder.scaled_angle;
+    leftEncoder.scaled_angle = (long)(encleft.getScaledAngle() * 100);
+    leftEncoder.read_time = millis();
+    if (abs(leftEncoder.last_scaled_angle - leftEncoder.scaled_angle) > 18000)
+    {
+        leftEncoder.absolute_revolutions++;
+        if (leftEncoder.last_scaled_angle > leftEncoder.scaled_angle)
+            leftEncoder.revolutions--;
+        else
+            leftEncoder.revolutions++;
+    }
+
+    Serial.printf("scaled angle: %d, last: %d\n", leftEncoder.scaled_angle, leftEncoder.last_scaled_angle);
+
+    int diff = leftEncoder.scaled_angle - leftEncoder.last_scaled_angle;
+    while (diff <= -18000)
+        diff += 36000;
+    while (diff > 18000)
+        diff -= 36000;
+
+    leftEncoder.diff = diff;
+    leftEncoder.total_angle += diff;
+}
+
+void Sensors::getEncoderRightAngle()
+{
+    rightEncoder.last_read_time = rightEncoder.read_time;
+    rightEncoder.last_scaled_angle = rightEncoder.scaled_angle;
+    rightEncoder.scaled_angle = (long)(encright.getScaledAngle() * 100);
+    rightEncoder.read_time = millis();
+    if (abs(rightEncoder.last_scaled_angle - rightEncoder.scaled_angle) > 18000)
+    {
+        rightEncoder.absolute_revolutions++;
+        if (rightEncoder.last_scaled_angle > rightEncoder.scaled_angle)
+            rightEncoder.revolutions--;
+        else
+            rightEncoder.revolutions++;
+    }
+
+    int diff = rightEncoder.last_scaled_angle - rightEncoder.scaled_angle;
+    while (diff <= -18000)
+        diff += 36000;
+    while (diff > 18000)
+        diff -= 36000;
+
+    rightEncoder.diff = diff;
+    rightEncoder.total_angle += diff;
 }
