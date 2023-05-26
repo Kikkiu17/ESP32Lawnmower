@@ -60,7 +60,7 @@
 #define MPU_CALIBRATION_TIME 30             // secondi
 
 // --- NAVIGATION.CPP ---
-#define MPU_SPD_SENSORS_REFRESH_RATE 5      // ms
+#define MPU_SPD_SENSORS_REFRESH_RATE 2      // ms
 #define ENABLE_AUTO_NAVIGATION true         // necessita di ENABLE_MOVEMENT_SENSORS, ENABLE_ROTATION_SENSING, ENABLE_OBSTACLE_AVOIDANCE, ENABLE_SPD_SENSORS abilitati
 #define ENABLE_ROTATION_SENSING true        // ferma il robot quando l'heading target viene raggiunto
 #define ENABLE_ROTATION_LOOP true           // FEEDBACK LOOP - consente al modulo di navigazione di abbassare la velocità man mano si raggiunge la direzione target
