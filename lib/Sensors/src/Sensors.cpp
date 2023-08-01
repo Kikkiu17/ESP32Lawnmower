@@ -292,9 +292,6 @@ void pausedEvent()
     sensornav.resume();
 }
 
-uint32_t lastttime = 0;
-float rots = 0;
-
 void Sensors::update()
 {
     uint32_t start_time = esp_timer_get_time();
@@ -555,17 +552,4 @@ void Sensors::startSensorPolling()
 void Sensors::enablePositionEncoders()
 {
     robot.enable_speed_encoders = true;
-}
-
-void Sensors::signalRotation(bool start)
-{
-    if (start)
-        robot.rotation_delta = robot.angle;
-    else if (robot.last_direction == RIGHT || robot.last_direction == LEFT)
-    {
-        robot.rotation_delta = yaw - robot.rotation_delta;
-        robot.angle += float(robot.rotation_delta);
-    }
-
-    robot.last_direction = sensormotors.getDirection();
 }

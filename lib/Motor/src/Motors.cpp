@@ -162,8 +162,7 @@ void Motors::right(bool pivot)
     time_wait = millis();
 
     direc = RIGHT;
-    motorsensor.signalRotation(true);
-    //motorsensor.enablePositionEncoders();
+    motorsensor.enablePositionEncoders();
 }
 
 void Motors::left(bool pivot)
@@ -196,25 +195,23 @@ void Motors::left(bool pivot)
     maintain_heading = false;
 
     direc = LEFT;
-    motorsensor.signalRotation(true);
-    //motorsensor.enablePositionEncoders();
+    motorsensor.enablePositionEncoders();
 }
 
 void Motors::stop()
 {
     motorstatus.setReady(true);
-    /*ledcWrite(CH_R1, 0);
+    ledcWrite(CH_R1, 0);
     ledcWrite(CH_R2, 0);
     ledcWrite(CH_L1, 0);
-    ledcWrite(CH_L2, 0);*/
-    brake();
+    ledcWrite(CH_L2, 0);
+    //brake();
     direction = 't';
     robot_moving = false;
     maintain_heading = false;
     motorsensor.resetMovementVars();
     motorsensor.setMotorsStop();
     direc = STOP;
-    motorsensor.signalRotation(false);
 }
 
 unsigned int Motors::getDirection()

@@ -63,9 +63,6 @@ class Sensors
 
         void startSensorPolling();
         void enablePositionEncoders();
-        // chiamato quando inizia o finisce una rotazione
-        // @param start se true, indica l'inizio della rotazione
-        void signalRotation(bool start);
 
     private:
         void getFrontUSObstacle(uint8_t request_type = DEFAULT);

@@ -175,7 +175,7 @@ public:
     void scroll();
 
     // ferma le ruote del robot (non la logica) se si stava muovendo
-    void pause(void (*fun_pause)(void));
+    void pause();
     // mette in moto le ruote del robot (avanti) se si stava muovendo
     void resume();
 

@@ -252,6 +252,7 @@ DirControl dir;
 Chrono chrono;
 Chrono chrono1;
 MapCreationInfo mapinfo;
+// contiene il comando attuale in esecuzione (NAVIGAZIONE)
 CurrentCommand currcmd;
 
 int32_t current_hdg = 0;
@@ -275,9 +276,9 @@ void NAV::update()
 
     if (nav_ptr->commands.size() > 0 && !nav_ptr->busy)
     {
+        currcmd.id = nav_ptr->commands[0];
         if (nav_ptr->commands[0] == GOFORWARD || nav_ptr->commands[0] == GOBACKWARDS)
         {
-            currcmd.id = nav_ptr->commands[0];
             if (nav_ptr->commands[0] == GOFORWARD)
                 goForward(nav_ptr->data[0], nav_ptr->data[1]);                      // non si possono usare valori default, sono obbligatori valori noti
             else
@@ -1740,7 +1741,7 @@ void NAV::scroll()
     //removeDuplicatesFromMap(mapinfo.width, mapinfo.height, mapinfo.minx, mapinfo.miny, mapinfo.fill_start_pos);
 }
 
-void NAV::pause(void (*fun_pause)(void))
+void NAV::pause()
 {
     NAVSensors.setMotorsStop(); // resetta gli encoder, altrimenti il tempo registrato farebbe sballare le misure
     NAVMotors.stop();
@@ -2715,6 +2716,8 @@ void NAV::begin()
 {
     nav_ptr = &navqueue;
     avoid_ptr = &avoidqueue;
+
+    currcmd.isbusy = &navqueue.busy;
 
     if (!USE_SD) return;
     spi->begin(SCLK, MISO, MOSI, CS);
