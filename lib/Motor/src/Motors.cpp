@@ -160,8 +160,10 @@ void Motors::right(bool pivot)
     robot_moving = true;
     maintain_heading = false;
     time_wait = millis();
+
     direc = RIGHT;
-    motorsensor.enablePositionEncoders();
+    motorsensor.signalRotation(true);
+    //motorsensor.enablePositionEncoders();
 }
 
 void Motors::left(bool pivot)
@@ -192,8 +194,10 @@ void Motors::left(bool pivot)
     direction = 'a';
     robot_moving = true;
     maintain_heading = false;
+
     direc = LEFT;
-    motorsensor.enablePositionEncoders();
+    motorsensor.signalRotation(true);
+    //motorsensor.enablePositionEncoders();
 }
 
 void Motors::stop()
@@ -209,8 +213,8 @@ void Motors::stop()
     maintain_heading = false;
     motorsensor.resetMovementVars();
     motorsensor.setMotorsStop();
-
     direc = STOP;
+    motorsensor.signalRotation(false);
 }
 
 unsigned int Motors::getDirection()
@@ -223,7 +227,7 @@ void Motors::maintainHeading()
     // DESTRA: DIFF NEGATIVO; SINISTRA: DIFF POSITIVO
 
     int32_t current_heading = motorsensor.getHeading();
-    int32_t diff = heading_to_maintain - current_heading;
+    int32_t diff = current_heading - heading_to_maintain;
 
     if (reverse_heading)
         diff *= -1; // inverte destra e sinistra se il robot sta andando indietro
@@ -488,6 +492,14 @@ void Motors::brake()
     ledcWrite(CH_R2, MOT_MAX_VAL);
     ledcWrite(CH_L1, MOT_MAX_VAL);
     ledcWrite(CH_L2, MOT_MAX_VAL);
+}
+
+void Motors::playInactiveSound()
+{
+    sp->notes->push_back(Note(496, 250));
+    sp->notes->push_back(Note(496, 250, 0));
+    sp->notes->push_back(Note(496, 250));
+    sp->notes->push_back(Note(MAIN_MOT_FREQ, 250, 0));
 }
 
 void Motors::begin()

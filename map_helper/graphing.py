@@ -15,8 +15,16 @@ class POINT:
         self.y = y
         self.id = id
 
+    def __lt__(self, other):
+        if(self.x < other.x or (not (other.x < self.x) and self.y < other.y)):
+            return True
+        else:
+            return False
+
+points = []
 
 def read_POINT_file(filename):
+    pts = 0
     idx = 0
     try:
         with open(filename, "rb") as f:
@@ -30,6 +38,9 @@ def read_POINT_file(filename):
 
                 x, y, id = struct.unpack("<hhh", data)  # Unpack the binary data
 
+                points.append(POINT(x, y, id))
+                pts += 1
+
                 if id == 0:
                 # green
                     gxarr.append(x)
@@ -42,10 +53,15 @@ def read_POINT_file(filename):
                     # blue
                     bxarr.append(x)
                     byarr.append(y)
+        print(f"there are {pts} points")
     except IOError as e:
         print("Error: {}".format(e))
 
 read_POINT_file(r"F:\map.bin")
+
+print("last point:", points[-1].x, ",", points[-1].y)
+
+
 
 plot_widget = pg.plot(title="test")
 scat3 = pg.ScatterPlotItem(x=bxarr, y=byarr, brush=pg.mkBrush('b'))

@@ -195,7 +195,7 @@ void Core::loop()
         }
         else if (data == 'i')
         {
-            navigation.sdspeedtest(256);
+            //////////////////////////////////////////////////////////////////////
         }
         else if (data == 'r')
         {
@@ -325,9 +325,13 @@ void Core::loop()
     }
 
     status.update();
+    //Serial.printf("status OK\n");
     sensors.update();
+    //Serial.printf("sens OK\n");
     motors.update();
+    //Serial.printf("mot OK\n");
     if (!ENABLE_AUTO_NAVIGATION)
         return;
     navigation.update();
+    //Serial.printf("nav OK\n");
 }

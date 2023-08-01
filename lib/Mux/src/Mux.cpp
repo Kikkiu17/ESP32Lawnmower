@@ -46,8 +46,8 @@ uint8_t sensor = 0;
 
 // array:
 // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
-unsigned long mux_data[9] = {};
-unsigned long *mux_data_ptr = mux_data;
+uint64_t mux_data[9] = {};
+uint64_t *mux_data_ptr = mux_data;
 uint8_t mux_data_idx = 0;
 uint8_t mux_ch = 0;
 
@@ -150,7 +150,7 @@ void IRAM_ATTR PulseInFunction(void *param)
                 stop_US_time = esp_timer_get_time();
                 if (stop_US_time - start_US_time > US_SENS_DST_TRIG + 50 || analogRead(MUX_COM) < 2046)
                 {
-                    unsigned long diff = stop_US_time - start_US_time;
+                    uint64_t diff = stop_US_time - start_US_time;
                     execute_once = false;
                     signal_low = false;
                     rising_edge = false;
@@ -345,7 +345,7 @@ void ReadAnalogFunction(void *param)
     }
 }
 
-unsigned long *Mux::getPacketPointer()
+uint64_t *Mux::getPacketPointer()
 {
     return mux_data_ptr;
 }

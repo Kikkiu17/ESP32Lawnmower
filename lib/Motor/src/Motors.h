@@ -72,6 +72,7 @@ class Motors
         int32_t addToHeadingToMaintain(int32_t degs);
 
         void playInitSound();
+        void playInactiveSound();
         void brake();
 };
 

@@ -1,18 +1,7 @@
 #include <SPI.h>
 #include "Wire.h"
+#include <MPU6050_light.h>
 #include <FunctionalInterrupt.h>
-
-#include "I2Cdev.h"
-#include "MPU6050_6Axis_MotionApps20.h"
-#include "Wire.h"
-TaskHandle_t mpu_update_handle;
-MPU6050 mpu;
-uint16_t packetSize;
-uint16_t fifoCount;
-uint8_t fifoBuffer[64];
-Quaternion q;
-VectorFloat gravity;
-float ypr[3];
 
 #include <AS5600.h>
 #include <Sensors.h>
@@ -24,6 +13,7 @@ float ypr[3];
 
 // l'mpu e l'encoder sinistro usano entrambi il bus 0 (sda 11, scl 12) anche se sulla pcb dovrebbero usare bus diversi (sistemato in rev3)
 // questo perché l'esp32s3 ha solo 2 bus I2C quindi non potrebbe gestire tutte e 3 le periferiche
+MPU6050 mpu = MPU6050(Wire);
 Motors sensormotors;
 Core sensorcore;
 NAV sensornav;
@@ -35,7 +25,6 @@ uint32_t inactivity_count = 0;
 uint64_t *sensor_packetptr;
 
 float yaw = 0;
-float yaw_compensation = YAW_COMP_START_VALUE;
 float pitch = 0;
 float roll = 0;
 
@@ -191,97 +180,24 @@ SetZero setzero;
 SensorPacket senspacket;
 Sensors::Robot robot;
 
-void mpuUpdate(void* params)
-{
-    uint32_t yaw_timer = 0;
-    uint32_t received_notification = 0;
-    bool mpu_run = true;
-    while (1)
-    {
-        if (xTaskNotifyWait(0, ULONG_MAX, &received_notification, 0) == pdTRUE)
-        {
-            if (received_notification == STOP)
-                mpu_run = false;
-            else if (received_notification == RUN)
-                mpu_run = true;
-        }
-
-        if (mpu_run)
-        {
-            fifoCount = mpu.getFIFOCount();
-
-            if (fifoCount == 1024)
-            {
-                mpu.resetFIFO();
-                Serial.println(F("FIFO overflow!"));
-            }
-            else
-            {
-                if (fifoCount % packetSize != 0)
-                    mpu.resetFIFO();
-                else
-                {
-                    while (fifoCount >= packetSize)
-                    {
-                        mpu.getFIFOBytes(fifoBuffer,packetSize);
-                        fifoCount -= packetSize;
-                    }
-                }
-
-                mpu.dmpGetQuaternion(&q,fifoBuffer);
-                mpu.dmpGetGravity(&gravity,&q);
-                mpu.dmpGetYawPitchRoll(ypr,&q,&gravity);          
-                
-                yaw = ypr[0]*180/PI + yaw_compensation;
-                pitch = ypr[1]*180/PI;
-                roll = ypr[2]*180/PI;
-            }
-
-            if (millis() - yaw_timer > YAW_COMP_LOOP)
-            {
-                yaw_compensation += YAW_COMP_DRIFT;
-                yaw_timer = millis();
-            }
-        }
-
-        vTaskDelay(6 / portTICK_PERIOD_MS);
-    }
-}
-
 void Sensors::begin()
 {
     Wire.begin(11, 12);
     Wire.setClock(800000L);
 
     sensorcore.print(F("(Sensors) Initializing MPU6050,"));
-    mpu.initialize();
-    sensorcore.println(F(" OK"));
-    sensorcore.print(F("(Sensors) Initializing DMP"));
-    if (mpu.dmpInitialize() == 1)
+    if (mpu.begin() == 0)
     {
-        sensorcore.println(F(" CANNOT INITIALIZE DMP!"));
-        while (true)
-            delay(10);
+        sensorcore.println(F(" OK"));
+        sensorcore.print(F("(Sensors) Calibrating accelerometer / gyro,"));
+        mpu.calcOffsets(true, true);
+        sensorcore.println(F(" OK"));
+        sensor_packetptr = sensormux.getPacketPointer();
     }
-    sensorcore.println(F(" OK"));
-    sensorcore.print(F("(Sensors) Calibrating IMU, "));
-    /*mpu.setXAccelOffset(-3314);
-    mpu.setYAccelOffset(-1360);
-    mpu.setZAccelOffset(767);
-    mpu.setXGyroOffset(115);
-    mpu.setYGyroOffset(1);
-    mpu.setZGyroOffset(8);*/
-    mpu.CalibrateAccel();
-    mpu.CalibrateGyro();
-    sensorcore.println(F(" DONE"));
-    mpu.setDMPEnabled(true);
-    packetSize = mpu.dmpGetFIFOPacketSize();
-    fifoCount = mpu.getFIFOCount();
-    sensor_packetptr = sensormux.getPacketPointer();
+    else
+        sensorcore.println(F(" CANNOT INITIALIZE MPU!"));
 
     pinMode(REF_BAT, INPUT);
-
-    xTaskCreatePinnedToCore(mpuUpdate, "mpuUpdate", 4096, NULL, 10, &mpu_update_handle, 0);
 }
 
 uint32_t temp_time = 0;
@@ -289,6 +205,7 @@ uint32_t pause_time = 0;
 
 void pausedEvent()
 {
+    mpu.calcOffsets();
     sensornav.resume();
 }
 
@@ -329,6 +246,7 @@ void Sensors::update()
     // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
     if (senspacket.info.is_polling && ENABLE_OBSTACLE_AVOIDANCE)
     {
+        Serial.printf("checking front O.o\n");
         senspacket.obstacle.us_f = *(sensor_packetptr);
         senspacket.obstacle.us_l = *(sensor_packetptr + 1);
         senspacket.obstacle.us_r = *(sensor_packetptr + 2);
@@ -396,6 +314,7 @@ void Sensors::update()
 
     if (millis() - sens_refresh_time > MPU_MOT_ENCODERS_REFRESH_RATE)
     {
+        mpu.update();
 
         if (direction == FWD && ENABLE_OBSTACLE_AVOIDANCE)
         {
@@ -435,8 +354,7 @@ void Sensors::update()
                     robot.traveled_distance += robot.traveled_distance_raw;
                     robot.last_traveled_distance = robot.traveled_distance_raw;
 
-                    // CALCOLO HEADING CON ENCODER
-                    /*float left_radius = (ROBOT_WIDTH / 10.0) * abs(leftspd / (abs(leftspd) + abs(rightspd)));
+                    float left_radius = (ROBOT_WIDTH / 10.0) * abs(leftspd / (abs(leftspd) + abs(rightspd)));
                     float robot_w = 0;
 
                     if (leftspd < 0 && rightspd > 0 || rightspd < 0 && leftspd > 0)
@@ -447,9 +365,7 @@ void Sensors::update()
                     float inst = degrees((robot_w) * deltaT);
                     robot.angle += inst;
                     while (robot.angle >  180.0) robot.angle -= 360.0;
-                    while (robot.angle < -180.0) robot.angle += 360.0;*/
-
-
+                    while (robot.angle < -180.0) robot.angle += 360.0;
                     //Serial.printf("dst: %f, ang: %f, inst: %f, left: %f, right: %f -- LSPD: %f, RSPD: %f deltatime: %f\n", robot.traveled_distance, robot.angle, inst, left_w, right_w, leftspd, rightspd, deltaT);
                     //Serial.printf("ang: %f, deltaT: %f, deltaR: %f, robot.traveled_distance: %f, dst: %f -- LRPM: %f, RRPM: %f\n", robot.angle, deltaT, deltaR, robot.traveled_distance, dst / 10.0, leftrpm, rightrpm);
                 }
@@ -472,25 +388,46 @@ uint32_t Sensors::getTime()
     return t2;
 }
 
+void Sensors::getValues()
+{
+    // è generalmente meglio liberare tutti i registri in un colpo solo
+    yaw = mpu.getAngleZ();
+    pitch = mpu.getAngleY();
+    roll = mpu.getAngleX();
+}
+
 int32_t Sensors::getRoll()
 {
+    getValues();
     if (INVERT_ROLL)
-        return roll * -100;
+        roll *= -1;
     return roll * 100;
 }
 
 int32_t Sensors::getPitch()
 {
+    getValues();
     if (INVERT_PITCH)
-        return pitch * -100;
+        pitch *= -1;
     return pitch * 100;
 }
 
 int32_t Sensors::getHeading()
 {
+    getValues();
+
+    // usa l'heading dell'MPU per le rotazioni su sé stesso, altrimenti usa quello ottenuto dagli encoder
+    uint32_t direction = sensormotors.getDirection();
+    if (direction == RIGHT || direction == LEFT)
+    {
+        if (INVERT_YAW)
+            return yaw * -100;
+        return yaw * 100;
+    }
+
     if (INVERT_YAW)
-        return yaw * -100;
-    return yaw * 100;
+        return robot.angle * 100;
+    return robot.angle * -100;
 }
 
 void Sensors::resetMovementVars()

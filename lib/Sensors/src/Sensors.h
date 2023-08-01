@@ -10,9 +10,9 @@ class Sensors
         void begin();
         void update();
 
-        int getAccX();
-        int getAccY();
-        int getAccZ();
+        uint32_t getAccX();
+        uint32_t getAccY();
+        uint32_t getAccZ();
         int32_t getRoll();
         int32_t getPitch();
         int32_t getHeading();
@@ -42,7 +42,7 @@ class Sensors
         float getLastTraveledDistance();
         void resetTraveledDistance();
         void returnUSDistance(float distance);
-        unsigned int getTime();
+        uint32_t getTime();
         struct SelfTest* getSelfTestResults();
 
         class Robot
@@ -51,17 +51,23 @@ class Sensors
                 float traveled_distance_raw = 0;
                 float traveled_distance = 0;
                 float last_traveled_distance = 0;
-                bool first_iteration_ignored = false;
+                uint32_t iterations_ignored = 0;
                 bool enable_speed_encoders = 0;
                 float angle = 0;
-                unsigned int last_angle_time = 0;
+                int32_t last_angle_time = 0;
+                bool is_inactive = false;
+                uint32_t bat_check_time = DEFAULT_BAT_CHECK_TIME;   // ms
+                int32_t rotation_delta = 0;
+                uint32_t last_direction = STOP;
         };
 
         void startSensorPolling();
         void enablePositionEncoders();
+        // chiamato quando inizia o finisce una rotazione
+        // @param start se true, indica l'inizio della rotazione
+        void signalRotation(bool start);
 
     private:
-        void getValues();
         void getFrontUSObstacle(uint8_t request_type = DEFAULT);
         void getAccelErrors();
 
@@ -76,7 +82,7 @@ class Sensors
          * Accetta e restituisce sempre e solo valori positivi
          * Se first_half e second_half sono entrambi TRUE, inverte tutti gli heading. Es: 135° -> 45°; 45° -> 135°
          */
-        long invert180HDG(long hdg);
+        int64_t invert180HDG(int64_t hdg);
          /**
          * @brief Converte un valore di heading in formato 360° in un valore di heading in formato 180°
          * 
@@ -84,7 +90,7 @@ class Sensors
          * @param always_positive Indica se il risultato dev'essere sempre positivo (default: false)
          * @return int32_t Heading in formato 180°
          */
-        long convert360To180HDG(long hdg, bool always_positive = false);
+        int64_t convert360To180HDG(int64_t hdg, bool always_positive = false);
 };
 
 #endif

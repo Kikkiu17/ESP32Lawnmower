@@ -1,8 +1,9 @@
 #ifndef _MAP_H_
 #define _MAP_H_
 
+#include <Arduino.h>
+#include "maputils.h"
 #include "psramvector.h"
-#include "Navigation.h"
 #include "SETTINGS.h"
 
 class Map
