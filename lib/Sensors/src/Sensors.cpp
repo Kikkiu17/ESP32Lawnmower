@@ -157,20 +157,9 @@ struct SensorPacket
         uint64_t us_f = 0;
         uint64_t us_l = 0;
         uint64_t us_r = 0;
-        uint64_t ir_f = 0;
-        uint64_t ir_l = 0;
         bool check_next_dst = false;
         uint64_t check_dst_packet = 0;
     } obstacle;
-
-    struct
-    {
-        uint64_t value = 0;
-        uint64_t n_values = 0;
-        uint64_t total = 0;
-        bool waiting = false;
-
-    } bat;
 
     uint64_t read_digital = 0;
     uint64_t read_analog = 0;
@@ -323,15 +312,12 @@ void Sensors::update()
         temp_time = millis();
     }
 
-    // US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
+    // US_F, US_L, US_R, READ_DIGITAL, READ_ANALOG, PACKET_ID
     if (senspacket.info.is_polling && ENABLE_OBSTACLE_AVOIDANCE)
     {
         senspacket.obstacle.us_f = *(sensor_packetptr);
         senspacket.obstacle.us_l = *(sensor_packetptr + 1);
         senspacket.obstacle.us_r = *(sensor_packetptr + 2);
-        senspacket.obstacle.ir_f = *(sensor_packetptr + 3);
-        senspacket.obstacle.ir_f = *(sensor_packetptr + 4);
-        senspacket.bat.value = *(sensor_packetptr + 5);
         senspacket.read_digital = *(sensor_packetptr + 6);
         senspacket.read_analog = *(sensor_packetptr + 7);
         senspacket.info.id = *(sensor_packetptr + 8);

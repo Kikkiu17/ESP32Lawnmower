@@ -45,8 +45,8 @@ bool sens_packet_stopped = false;
 uint8_t sensor = 0;
 
 // array:
-// US_F, US_L, US_R, IR_F, IR_L, BAT, READ_DIGITAL, READ_ANALOG, PACKET_ID
-uint64_t mux_data[9] = {};
+// US_F, US_L, US_R, READ_DIGITAL, READ_ANALOG, PACKET_ID
+uint64_t mux_data[6] = {};
 uint64_t *mux_data_ptr = mux_data;
 uint8_t mux_data_idx = 0;
 uint8_t mux_ch = 0;
@@ -237,35 +237,11 @@ void TaskManagerFunction(void *param)
                             xQueueSend(PulseInQueue, (void *)&item_to_queue, 0);
                             break;
                         }
-                        case 3:
-                        {
-                            sensor++;
-                            mux_ch = 0;
-                            item_to_queue = SENS_PACKET;
-                            xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
-                            break;
-                        }
                         case 4:
-                        {
-                            sensor++;
-                            mux_ch = 0;
-                            item_to_queue = SENS_PACKET;
-                            xQueueSend(ReadDigitalQueue, (void *)&item_to_queue, 0);
-                            break;
-                        }
-                        case 5:
-                        {
-                            sensor++;
-                            mux_ch = 0;
-                            item_to_queue = SENS_PACKET;
-                            xQueueSend(ReadAnalogQueue, (void *)&item_to_queue, 0);
-                            break;
-                        }
-                        case 6:
                         {
                             sensor = 0;
                             mux_data_idx = 0;
-                            mux_data[8]++;
+                            mux_data[5]++;
                             vTaskDelay(pdMS_TO_TICKS(6));
                             item_to_queue = SENS_PACKET;
                             xQueueSend(TaskManagerQueue, (void *)&item_to_queue, 0);
@@ -307,8 +283,8 @@ void ReadDigitalFunction(void *param)
             }
             else if (buffer == READ_DIGITAL)
             {
-                mux_data[8]++;
-                mux_data[6] = digitalRead(MUX_COM);
+                mux_data[5]++;
+                mux_data[3] = digitalRead(MUX_COM);
             }
         }
     }
@@ -338,8 +314,8 @@ void ReadAnalogFunction(void *param)
             }
             else if (buffer == READ_ANALOG)
             {
-                mux_data[8]++;
-                mux_data[7] = analogRead(MUX_COM);
+                mux_data[5]++;
+                mux_data[4] = analogRead(MUX_COM);
             }
         }
     }
@@ -475,7 +451,7 @@ void Mux::begin()
 
 void Mux::loop()
 {
-    if (mux_data[8] == 50 && !sens_packet_stopped)
+    if (mux_data[5] == 50 && !sens_packet_stopped)
         sens_packet_stopped = true;
     return;
 }
